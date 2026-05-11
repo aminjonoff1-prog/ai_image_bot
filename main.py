@@ -1,5 +1,7 @@
 import asyncio
 import os
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, FSInputFile, BotCommand
@@ -13,6 +15,22 @@ from image_gen import generate_image
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
+# === RENDER PORT MUAMMOSI UCHUN SOXTA SERVER ===
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot serverda muammosiz ishlamoqda!")
+
+def run_dummy_server():
+    port = int(os.environ.get('PORT', 8000))
+    server = HTTPServer(('0.0.0.0', port), DummyHandler)
+    server.serve_forever()
+
+# Serverni botning asosiy ishi (polling) ga xalaqit bermasligi uchun alohida oqimda ishga tushiramiz
+threading.Thread(target=run_dummy_server, daemon=True).start()
+# ===============================================
+
 bot = Bot(
     token=BOT_TOKEN.strip(),
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
@@ -21,14 +39,12 @@ dp = Dispatcher()
 
 user_category = {}
 
-
 @dp.message(Command("start"))
 async def start(m: Message):
     await m.answer(
         "👋 Salom!\n\nKategoriya tanlang va tavsif yozing.",
         reply_markup=main_menu()
     )
-
 
 @dp.message(Command("help"))
 async def help_cmd(m: Message):
@@ -39,12 +55,10 @@ async def help_cmd(m: Message):
         "3. Rasm tayyor bo‘ladi"
     )
 
-
 @dp.message(F.text.in_(["🎨 Logo", "🖼 Realistik", "📱 Avatar", "🏠 Interyer", "🌄 Landscape"]))
 async def category(m: Message):
     user_category[m.from_user.id] = m.text
     await m.answer("✍️ Endi tasvirni yozing")
-
 
 @dp.message()
 async def generate(m: Message):
@@ -70,7 +84,6 @@ async def generate(m: Message):
 
     await msg.delete()
 
-
 async def main():
     await bot.set_my_commands([
         BotCommand(command="start", description="Boshlash"),
@@ -79,7 +92,6 @@ async def main():
 
     print("Bot ishga tushdi ✅")
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
