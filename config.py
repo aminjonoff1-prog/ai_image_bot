@@ -1,5 +1,11 @@
-BOT_TOKEN = "8430089290:AAEyAKVhGHE59rG-qM509ouPy3HyGDe5qTY"
-STABILITY_API_KEY = "sk-JK3X2ZwRyqPuK0Jq77I8IHJPIxPsOYZpFY8aA6BM3mL3l6o1"
-FREE_LIMIT = 5
+import os
+from dotenv import load_dotenv
 
-print("TOKEN OK")
+load_dotenv()
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+STABILITY_API_KEY = os.getenv("STABILITY_API_KEY")
+HF_API_KEY = os.getenv("HF_API_KEY")
+FREE_LIMIT = int(os.getenv("FREE_LIMIT", 5))
+
+print("Kofiglar xavfsiz yuklandi OK")
