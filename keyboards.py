@@ -5,7 +5,7 @@ def main_menu():
         keyboard=[
             [KeyboardButton(text="🎨 Logo"), KeyboardButton(text="🖼 Realistik")],
             [KeyboardButton(text="📱 Avatar"), KeyboardButton(text="🏠 Interyer")],
-            [KeyboardButton(text="🌄 Landscape"), KeyboardButton(text="📊 Prezentatsiya")]
+            [KeyboardButton(text="🌄 Landscape")]
         ],
         resize_keyboard=True
     )
