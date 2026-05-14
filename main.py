@@ -1,7 +1,6 @@
 import asyncio
 import os
 import threading
-import aiohttp
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from aiogram import Bot, Dispatcher, F
@@ -9,7 +8,7 @@ from aiogram.types import Message, FSInputFile, BotCommand
 from aiogram.filters import Command
 from pptx import Presentation
 
-from config import BOT_TOKEN, FREE_LIMIT, HF_API_KEY # config dan HF_API_KEY ni oladi
+from config import BOT_TOKEN, FREE_LIMIT
 from db import check_limit
 from keyboards import main_menu
 from image_gen import generate_image
@@ -40,31 +39,10 @@ dp = Dispatcher()
 
 user_category = {}
 
-# --- HUGGING FACE AI MATN OLISH FUNKSIYASI ---
+# --- MATN OLISH FUNKSIYASI (Hugging Face olib tashlandi) ---
 async def get_ai_content(topic, slide_num):
-    url = "https://api-inference.huggingface.co/models/mistralai/Mixtral-8x7B-Instruct-v0.1"
-    headers = {"Authorization": f"Bearer {HF_API_KEY}"}
-    
-    # AI uchun akademik buyruq
-    prompt = (f"Mavzu: {topic}. Slayd raqami: {slide_num}. "
-              f"Ushbu slayd uchun ilmiy, akademik matn yozing. "
-              f"Faqat o'zbek tilida va faqat ilmiy faktlarni keltiring. "
-              f"Norasmiy so'zlardan qoching.")
-    
-    payload = {"inputs": prompt, "parameters": {"max_new_tokens": 200}}
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=payload) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    # AI javobini tozalash
-                    text = data[0]['generated_text'].replace(prompt, "").strip()
-                    return text if text else f"{topic} mavzusining nazariy tahlili."
-                else:
-                    return f"{topic} mavzusining {slide_num}-qismi haqida ilmiy ma'lumotlar."
-    except Exception:
-        return f"{topic} mavzusi bo'yicha akademik tahlillar."
+    # Boshqa AI (masalan, OpenRouter) ulanmaguncha shu vaqtinchalik matn chiqadi
+    return f"{topic} mavzusining {slide_num}-qismi haqida ilmiy va akademik ma'lumotlar."
 
 # --- PREZENTATSIYA YARATISH FUNKSIYASI (25 ta slayd) ---
 async def create_presentation(topic, user_id):
@@ -74,7 +52,7 @@ async def create_presentation(topic, user_id):
     slide_layout = prs.slide_layouts[0] 
     slide = prs.slides.add_slide(slide_layout)
     slide.shapes.title.text = topic.upper()
-    slide.placeholders[1].text = "Sun'iy intellekt (Mistral AI) yordamida tayyorlandi"
+    slide.placeholders[1].text = "Avtomatik tayyorlandi"
     
     # 25 tagacha slayd yaratish
     for i in range(2, 26):
@@ -84,7 +62,7 @@ async def create_presentation(topic, user_id):
         # Sarlavha
         slide.shapes.title.text = f"{topic} - {i}-bo'lim"
         
-        # AI'dan haqiqiy matn olish
+        # Matn olish
         ai_text = await get_ai_content(topic, i)
         
         # Slaydga matnni joylash
