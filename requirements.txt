@@ -2,5 +2,3 @@ aiogram
 httpx
 python-dotenv
 deep-translator
-python-pptx
-aiohttp
