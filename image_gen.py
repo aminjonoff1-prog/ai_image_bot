@@ -13,7 +13,6 @@ CATEGORY = {
     "🌄 Landscape": "beautiful landscape, nature"
 }
 
-
 async def process_prompt(text):
     try:
         translated = await asyncio.to_thread(
@@ -24,10 +23,12 @@ async def process_prompt(text):
     except:
         return text
 
-
 async def generate_image(prompt, category):
+    # Kalitni tekshiramiz va bosh/oxiridagi bo'sh joylarni tozalaymiz
+    api_key = STABILITY_API_KEY.strip() if STABILITY_API_KEY else ""
+    
     headers = {
-        "Authorization": f"Bearer {STABILITY_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Accept": "image/*"
     }
 
