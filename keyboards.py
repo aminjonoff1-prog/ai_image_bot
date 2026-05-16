@@ -1,11 +1,15 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 def main_menu():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🎨 Logo"), KeyboardButton(text="🖼 Realistik")],
-            [KeyboardButton(text="📱 Avatar"), KeyboardButton(text="🏠 Interyer")],
-            [KeyboardButton(text="🌄 Landscape")]
-        ],
-        resize_keyboard=True
-    )
+    # Tugmalarni qatorlarga ajratib chiqamiz
+    kb = [
+        [KeyboardButton(text="🎨 Logo"), KeyboardButton(text="🖼 Realistik")],
+        [KeyboardButton(text="📱 Avatar"), KeyboardButton(text="🏠 Interyer")],
+        [KeyboardButton(text="🌄 Landscape"), KeyboardButton(text="📊 Prezentatsiya")],
+        [KeyboardButton(text="🖥 UI/UX Web Dizayn"), KeyboardButton(text="🏢 3D Arxitektura")],
+        [KeyboardButton(text="💎 Brending"), KeyboardButton(text="🎮 Konsept Art")],
+        [KeyboardButton(text="🏢 Reklama Banneri")] # Bitta o'zini alohida qatorda qoldiramiz
+    ]
+    
+    # resize_keyboard=True tugmalar ekranning yarmini egallab olmasligi uchun kerak
+    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
