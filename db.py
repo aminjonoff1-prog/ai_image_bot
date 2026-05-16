@@ -16,6 +16,17 @@ def init_db():
             joined_date TEXT
         )
     ''')
+    
+    # --- RENDER XATOSINI TARTIBGA SOLISH ---
+    # Agar eski bazada 'username' ustuni yo'q bo'lsa, uni kod o'zi avtomatik qo'shib qo'yadi
+    cursor.execute("PRAGMA table_info(users)")
+    columns = [column[1] for column in cursor.fetchall()]
+    
+    if 'username' not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN username TEXT")
+        print("Baza yangilandi: 'username' ustuni qo'shildi.")
+    # --------------------------------------
+
     conn.commit()
     conn.close()
 
@@ -82,6 +93,9 @@ def get_all_users():
     cursor.execute("SELECT user_id FROM users")
     users = cursor.fetchall()
     conn.close()
+    # Faqat ID lardan iborat toza ro'yxat qaytarish
+    return [user[0] for user in users]
+
 def add_premium_limit(user_id, amount):
     # Foydalanuvchiga admin tomonidan limit qo'shish
     conn = sqlite3.connect(DB_NAME)
@@ -100,5 +114,3 @@ def add_premium_limit(user_id, amount):
         return True
     conn.close()
     return False
-    # Faqat ID lardan iborat toza ro'yxat qaytarish
-    return [user[0] for user in users]
