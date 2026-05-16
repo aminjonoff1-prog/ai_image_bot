@@ -7,6 +7,9 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, FSInputFile, BotCommand
 from aiogram.filters import Command
 from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.enum.text import PP_ALIGN
+from pptx.dml.color import RGBColor
 
 # config.py dan GEMINI_API_KEY ham chaqiriladi
 try:
@@ -74,29 +77,61 @@ async def get_ai_content(topic, slide_num):
         print(f"Gemini xatosi: {e}")
         return f"{topic} mavzusi bo'yicha akademik matn (Vaqtinchalik xato)."
 
-# --- PREZENTATSIYA YARATISH FUNKSIYASI (25 ta slayd) ---
+# --- PREZENTATSIYA YARATISH FUNKSIYASI (Xalqaro standartlarda) ---
 async def create_presentation(topic, user_id):
     prs = Presentation()
     
-    # 1-slayd: Titul
-    slide_layout = prs.slide_layouts[0] 
-    slide = prs.slides.add_slide(slide_layout)
-    slide.shapes.title.text = topic.upper()
-    slide.placeholders[1].text = "Gemini AI yordamida tayyorlandi"
+    # 1-slayd: Titul (Professional Title Slide)
+    title_slide_layout = prs.slide_layouts[0] 
+    slide = prs.slides.add_slide(title_slide_layout)
+    title = slide.shapes.title
+    subtitle = slide.placeholders[1]
     
-    # 25 tagacha slayd yaratish
+    # Titul sarlavhasi dizayni
+    title.text = topic.upper()
+    if title.text_frame.paragraphs:
+        title.text_frame.paragraphs[0].font.bold = True
+        title.text_frame.paragraphs[0].font.color.rgb = RGBColor(0, 51, 102) # To'q ko'k rang
+    
+    subtitle.text = "Tahliliy Hisobot\nGemini AI yordamida avtomatik tayyorlandi"
+    
+    # 25 tagacha slayd yaratish (1 titul + 24 matnli slayd)
     for i in range(2, 26):
-        slide_layout = prs.slide_layouts[1]
+        slide_layout = prs.slide_layouts[1] # Sarlavha va matn qolipi
         slide = prs.slides.add_slide(slide_layout)
         
-        # Sarlavha
-        slide.shapes.title.text = f"{topic} - {i}-bo'lim"
+        # Sarlavha dizayni (chapga tekislangan, to'q ko'k rang)
+        title_shape = slide.shapes.title
+        title_shape.text = f"{i}-bo'lim: {topic[:30]}..."
+        if title_shape.text_frame.paragraphs:
+            p = title_shape.text_frame.paragraphs[0]
+            p.font.size = Pt(28)
+            p.font.color.rgb = RGBColor(0, 51, 102)
+            p.alignment = PP_ALIGN.LEFT
         
-        # Gemini'dan haqiqiy matn olish
+        # Matnni Gemini'dan olish
         ai_text = await get_ai_content(topic, i)
         
-        # Slaydga matnni joylash
-        slide.placeholders[1].text = ai_text
+        # Asosiy matn dizayni
+        body_shape = slide.placeholders[1]
+        tf = body_shape.text_frame
+        tf.text = ai_text
+        
+        for paragraph in tf.paragraphs:
+            paragraph.font.size = Pt(15)
+            paragraph.font.name = 'Arial'
+            
+        # Footer qo'shish (Slaydning pastki qismi)
+        left = Inches(0.5)
+        top = Inches(7.0)
+        width = Inches(9.0)
+        height = Inches(0.5)
+        txBox = slide.shapes.add_textbox(left, top, width, height)
+        tf_footer = txBox.text_frame
+        p_footer = tf_footer.add_paragraph()
+        p_footer.text = f"Maxfiy | Loyiha: {topic[:15]}... | Slayd {i}"
+        p_footer.font.size = Pt(10)
+        p_footer.font.color.rgb = RGBColor(128, 128, 128) # Kulrang
         
     file_name = f"prezentatsiya_{user_id}.pptx"
     prs.save(file_name)
