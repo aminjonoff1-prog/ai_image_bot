@@ -17,11 +17,12 @@ except ImportError:
     GEMINI_API_KEY = None
     ADMIN_ID = 0
 
-from db import check_limit, init_db, add_user, get_stats, get_all_users
+# TO'G'RILANDI: get_stats va get_all_users import qatoriga qo'shildi
+from db import check_limit, init_db, add_user, get_stats, get_all_users, add_premium_limit
 from keyboards import main_menu
 from image_gen import generate_image
 from video_gen import generate_video
-from audio_gen import generate_audio  # Audio funksiyasi ulandi
+from audio_gen import generate_audio  
 
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -169,6 +170,29 @@ async def broadcast(m: Message):
             pass
     await msg.edit_text(f"✅ Xabar {count} ta foydalanuvchiga muvaffaqiyatli yuborildi.")
 
+@dp.message(Command("give"))
+async def give_limit_command(m: Message):
+    if m.from_user.id != ADMIN_ID:
+        return
+        
+    try:
+        parts = m.text.split()
+        target_user_id = int(parts[1])
+        amount = int(parts[2])
+        
+        success = add_premium_limit(target_user_id, amount)
+        if success:
+            await m.answer(f"✅ Foydalanuvchi <code>{target_user_id}</code> hisobiga +{amount} ta limit qo'shildi!")
+            try:
+                await bot.send_message(target_user_id, f"🎉 Premium faollashtirildi!\nHisobingizga +{amount} ta yangi dizayn limiti qo'shildi. Botdan to'liq foydalanishingiz mumkin!")
+            except Exception:
+                pass
+        else:
+            await m.answer("❌ Bunday ID ga ega foydalanuvchi bazadan topilmadi.")
+    except (IndexError, ValueError):
+        await m.answer("❗ Xato format. To'g'ri foydalanish:\n<code>/give [user_id] [miqdor]</code>\nMisol: <code>/give 512345678 30</code>")
+
+# TO'G'RILANDI: Ortiqcha takrorlangan ikkinchi 'category' handleri olib tashlandi, barchasi yagona tizimga keltirildi
 @dp.message(F.text.in_([
     "🎨 Logo", "🖼 Realistik", "📱 Avatar", "🏠 Interyer", "🌄 Landscape", "📊 Prezentatsiya",
     "🖥 UI/UX Web Dizayn", "🏢 3D Arxitektura", "💎 Brending", "🎮 Konsept Art", "🏢 Reklama Banneri",
@@ -193,7 +217,18 @@ async def generate(m: Message):
         return
 
     if not check_limit(user_id, FREE_LIMIT):
-        await m.answer("❌ Limit tugadi.")
+        tariff_text = (
+            "❌ <b>Sizning bepul limitlaringiz tugadi!</b>\n\n"
+            "Bot faoliyatini davom ettirish va murakkab dizaynlarni yaratish uchun tariflardan birini tanlang:\n\n"
+            "🎨 <b>Start Paket (30 ta limit)</b> - 19,000 so'm\n"
+            "🚀 <b>Professional (100 ta limit)</b> - 49,000 so'm\n"
+            "👑 <b>Biznes (1 oy cheksiz)</b> - 99,000 so'm\n\n"
+            "💳 <b>To'lov uchun karta (Uzcard/Humo):</b>\n"
+            "<code>5614 6805 1876 1602</code> (Aminjonov Muhammadamin)\n\n"
+            "⚠️ <i>To'lov qilgach, chekni va o'zingizning ID raqamingizni adminga yuboring:</i> @muhammad_amin07\n"
+            f"Sizning ID raqamingiz: <code>{user_id}</code>"
+        )
+        await m.answer(tariff_text)
         return
 
     category_name = user_category[user_id]
