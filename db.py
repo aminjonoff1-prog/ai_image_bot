@@ -14,15 +14,19 @@ def init_db():
     cursor = conn.cursor()
     
     # Baza jadvalining asosiy strukturasini yaratish (IF NOT EXISTS)
+    # TOZALANDI: SQL triple quotes orasidagi Python (#) kommentariyalari olib tashlandi
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
             username TEXT,
-            full_name TEXT,  # Bu ustun bo'lishi shart
+            full_name TEXT,
             usage_count INTEGER DEFAULT 0,
             joined_date TEXT
         )
     ''')
+
+    # Tranzaksiyani saqlash
+    conn.commit()
 
     # --- RENDER BAZASINI AVTOMAT YANGILASH (MIGRATSIYA) ---
     try:
@@ -37,34 +41,31 @@ def init_db():
         if 'full_name' not in columns:
             print("INFO: 'full_name' ustuni topilmadi, bazaga qo'shish boshlanmoqda...")
             cursor.execute("ALTER TABLE users ADD COLUMN full_name TEXT")
-            print("✅ INFO: 'full_name' ustuni bazaga muvaffaqiyatli qo'shildi.")
+            conn.commit() # Save alterations immediately
+            print("INFO: 'full_name' ustuni bazaga qo'shildi.")
         
-        # Boshqa ustunlarni ham tekshirish (username, usage_count va joined_date har doim bo'lishi kerak)
+        # Boshqa ustunlarni ham tekshirish
         if 'username' not in columns:
-            print("INFO: 'username' ustuni topilmadi, qo'shilmoqda...")
             cursor.execute("ALTER TABLE users ADD COLUMN username TEXT")
-            print("✅ INFO: 'username' ustuni qo'shildi.")
+            conn.commit()
 
         if 'usage_count' not in columns:
-            print("INFO: 'usage_count' ustuni topilmadi, qo'shilmoqda...")
             cursor.execute("ALTER TABLE users ADD COLUMN usage_count INTEGER DEFAULT 0")
-            print("✅ INFO: 'usage_count' ustuni qo'shildi.")
+            conn.commit()
 
         if 'joined_date' not in columns:
-            print("INFO: 'joined_date' ustuni topilmadi, qo'shilmoqda...")
             cursor.execute("ALTER TABLE users ADD COLUMN joined_date TEXT")
-            print("✅ INFO: 'joined_date' ustuni qo'shildi.")
+            conn.commit()
 
     except sqlite3.OperationalError as e:
         # Baza qulflangan yoki boshqa muammo bo'lsa
-        print(f"⚠️ DIQQAT: Baza ustunlarini tekshirishda xatolik: {e}")
-        # Agar baza qulflangan bo'lsa, davom etamiz, chunki bazada ma'lumot bo'lishi mumkin
+        print(f"DIQQAT: Baza ustunlarini tekshirishda xatolik: {e}")
     except Exception as e:
-        print(f"❌ XATO: Kutilmagan xatolik yuz berdi: {e}")
+        print(f"XATO: Kutilmagan xatolik: {e}")
 
-    # Yakuniy saqlash va yopish
-    conn.commit()
+    # Yakuniy yopish
     conn.close()
+    print("Baza init tugadi.")
 
 def add_user(user_id, username, full_name):
     # Yangi foydalanuvchini bazaga qo'shish
