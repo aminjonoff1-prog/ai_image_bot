@@ -1,4 +1,5 @@
 import os
+import asyncio
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, FSInputFile, BotCommand
@@ -19,13 +20,14 @@ except ImportError:
 from db import check_limit, init_db, add_user, get_stats, get_all_users
 from keyboards import main_menu
 from image_gen import generate_image
+from video_gen import generate_video
+from audio_gen import generate_audio  # Audio funksiyasi ulandi
 
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 import google.generativeai as genai
-import asyncio
 
 # --- GEMINI SOZLAMALARI ---
 if GEMINI_API_KEY:
@@ -40,7 +42,6 @@ dp = Dispatcher()
 user_category = {}
 
 # --- WEBHOOK SOZLAMALARI ---
-# Render bergan web manzilni oladi
 WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
 WEBHOOK_PATH = f"/webhook/{BOT_TOKEN.strip()}"
 WEBHOOK_URL_FULL = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
@@ -56,7 +57,7 @@ async def on_shutdown(bot: Bot):
 dp.startup.register(on_startup)
 dp.shutdown.register(on_shutdown)
 
-# --- GEMINI ORQALI MATN OLISH FUNKSIYASI ---
+# --- GEMINI MATN OLISH FUNKSIYASI (Prezentatsiya uchun) ---
 async def get_ai_content(topic, slide_num):
     if not GEMINI_API_KEY:
         return f"{topic} mavzusining {slide_num}-qismi haqida ma'lumotlar. (API kalit kiritilmagan)"
@@ -77,7 +78,7 @@ async def get_ai_content(topic, slide_num):
         print(f"Gemini xatosi: {e}")
         return f"{topic} mavzusi bo'yicha akademik matn (Vaqtinchalik xato)."
 
-# --- PREZENTATSIYA YARATISH FUNKSIYASI ---
+# --- PREZENTATSIYA YARATISH FUNKSIYASI (25 ta slayd) ---
 async def create_presentation(topic, user_id):
     prs = Presentation()
     
@@ -131,58 +132,56 @@ async def create_presentation(topic, user_id):
     return file_name
 
 # --- BOT HANDLERLARI ---
-# --- YASHIRIN ADMIN PANEL ---
+
+@dp.message(Command("start"))
+async def start(m: Message):
+    add_user(m.from_user.id, m.from_user.username, m.from_user.full_name)
+    await m.answer("👋 Salom! Kategoriya tanlang.", reply_markup=main_menu())
+
 @dp.message(Command("admin"))
 async def admin_panel(m: Message):
-    # Faqat admin ishlata oladi
     if m.from_user.id != ADMIN_ID:
         return
-    
     users_count, total_usage = get_stats()
     text = (f"📊 <b>Bot Statistikasi</b>\n\n"
             f"👥 Jami foydalanuvchilar: {users_count} ta\n"
-            f"🎨 Jami dizayn/slayd yasalgan: {total_usage} marta")
+            f"🎨 Jami media/slayd yasalgan: {total_usage} marta")
     await m.answer(text)
 
 @dp.message(Command("send"))
 async def broadcast(m: Message):
-    # Hammaga xabar tarqatish (Faqat admin uchun)
     if m.from_user.id != ADMIN_ID:
         return
-        
     text = m.text.replace("/send", "").strip()
     if not text:
-        await m.answer("❗ Xabar matnini kiriting.\nMisol: <code>/send Assalomu alaykum, botimizga yangi dizaynlar qo'shildi!</code>")
+        await m.answer("❗ Xabar matnini kiriting.\nMisol: <code>/send Assalomu alaykum!</code>")
         return
         
     users = get_all_users()
     count = 0
     msg = await m.answer("⏳ Xabar yuborilmoqda...")
-    
     for user_id in users:
         try:
             await bot.send_message(user_id, text)
             count += 1
-            await asyncio.sleep(0.05) # Telegram limitiga tushmaslik uchun (Spam himoyasi)
+            await asyncio.sleep(0.05)
         except Exception:
-            pass # Agar foydalanuvchi botni bloklagan bo'lsa, xato bermay o'tkazib yuboradi
-            
+            pass
     await msg.edit_text(f"✅ Xabar {count} ta foydalanuvchiga muvaffaqiyatli yuborildi.")
-@dp.message(Command("start"))
-async def start(m: Message):
-    # Foydalanuvchini bazaga yozib qo'yamiz
-    add_user(m.from_user.id, m.from_user.username, m.from_user.full_name)
-    await m.answer("👋 Salom! Kategoriya tanlang.", reply_markup=main_menu())
 
 @dp.message(F.text.in_([
     "🎨 Logo", "🖼 Realistik", "📱 Avatar", "🏠 Interyer", "🌄 Landscape", "📊 Prezentatsiya",
-    "🖥 UI/UX Web Dizayn", "🏢 3D Arxitektura", "💎 Brending", "🎮 Konsept Art", "🏢 Reklama Banneri"
+    "🖥 UI/UX Web Dizayn", "🏢 3D Arxitektura", "💎 Brending", "🎮 Konsept Art", "🏢 Reklama Banneri",
+    "🎬 Video Generatsiya", "🎵 Audio/Musiqa"
 ]))
 async def category(m: Message):
     user_category[m.from_user.id] = m.text
     if m.text == "🏢 Reklama Banneri":
-        await m.answer(f"✍️ Bannerda qanday tasvirlar bo'lishini xohlaysiz?\n\n"
-                       f"❗ Eslatma: AI matnlarni xato yozadi. Shuning uchun faqat fon, muhit va tasvirlarni yozing (masalan: 'kitob ushlagan bola, o'quv markazi foni'). Matn uchun bo'sh joy tashlab beriladi.")
+        await m.answer("✍️ Bannerda qanday tasvirlar bo'lishini xohlaysiz?\n\n❗ Eslatma: AI matnlarni xato yozadi. Shuning uchun faqat fon va tasvirlarni yozing. Matn uchun bo'sh joy tashlab beriladi.")
+    elif m.text == "🎬 Video Generatsiya":
+        await m.answer("🎬 <b>Google Veo Video Studio</b>\n\nQanday video yaratishni xohlaysiz? Batafsil yozing, tizim unga mos maxsus ovozli klip tayyorlab beradi.")
+    elif m.text == "🎵 Audio/Musiqa":
+        await m.answer("🎵 <b>Google Lyria 3 Ovoz Studiyasi</b>\n\nQanday janr va kayfiyatda musiqiy fon yaratish kerak? Batafsil yozing (Masalan: 'reklama uchun sokin royal ohangi').")
     else:
         await m.answer(f"✍️ {m.text} uchun mavzu yoki tavsif yozing:")
 
@@ -200,7 +199,7 @@ async def generate(m: Message):
     category_name = user_category[user_id]
 
     if category_name == "📊 Prezentatsiya":
-        msg = await m.answer("⏳ 25 ta slayddan iborat professional prezentatsiya tayyorlanyapti. Iltimos, kuting (1-2 daqiqa)...")
+        msg = await m.answer("⏳ 25 ta slayddan iborat professional prezentatsiya tayyorlanyapti (1-2 daqiqa)...")
         try:
             file = await create_presentation(m.text, user_id)
             await m.answer_document(FSInputFile(file), caption=f"📁 Mavzu: {m.text}\n✅ 25 ta slayd tayyor!")
@@ -208,31 +207,57 @@ async def generate(m: Message):
         except Exception as e:
             await m.answer(f"Xatolik: {e}")
         await msg.delete()
+
+    elif category_name == "🎬 Video Generatsiya":
+        msg = await m.answer("⏳ Google Veo videoni hisoblamoqda va tabiiy ovoz qo'shmoqda...")
+        try:
+            file, error = await generate_video(m.text)
+            if file:
+                await m.answer_video(FSInputFile(file), caption=f"🎬 G'oya: {m.text}\n🔥 Google Veo Studio")
+                os.remove(file)
+            else:
+                await m.answer(f"Xatolik: {error}")
+        except Exception as e:
+            await m.answer(f"Xatolik: {e}")
+        await msg.delete()
+
+    elif category_name == "🎵 Audio/Musiqa":
+        msg = await m.answer("⏳ Google Lyria 3 professional musiqiy trek bastalamoqda...")
+        try:
+            file, error = await generate_audio(m.text)
+            if file:
+                await m.answer_audio(FSInputFile(file), caption=f"🎵 Uslub: {m.text}\n⚡ Google Lyria 3")
+                os.remove(file)
+            else:
+                await m.answer(f"Xatolik: {error}")
+        except Exception as e:
+            await m.answer(f"Xatolik: {e}")
+        await msg.delete()
+
     else:
         msg = await m.answer("⏳ Rasm chizilyapti...")
-        file, error = await generate_image(m.text, category_name)
-        if file:
-            await m.answer_photo(FSInputFile(file))
-            os.remove(file)
-        else:
-            await m.answer(f"Xatolik: {error}")
+        try:
+            file, error = await generate_image(m.text, category_name)
+            if file:
+                await m.answer_photo(FSInputFile(file))
+                os.remove(file)
+            else:
+                await m.answer(f"Xatolik: {error}")
+        except Exception as e:
+            await m.answer(f"Xatolik: {e}")
         await msg.delete()
 
 # --- SERVERNI ISHGA TUSHIRISH ---
-# --- SERVERNI ISHGA TUSHIRISH ---
 def main():
-    init_db() # Baza ishga tushadi va users.db fayli yaratiladi
-    
+    init_db()
     app = web.Application()
     webhook_requests_handler = SimpleRequestHandler(
-# ... qolgan kodlar o'zgarishsiz qoladi
         dispatcher=dp,
         bot=bot,
     )
     webhook_requests_handler.register(app, path=WEBHOOK_PATH)
     setup_application(app, dp, bot=bot)
     
-    # Render muhitidagi portni olish (agar topolmasa 8000)
     port = int(os.environ.get("PORT", 8000))
     web.run_app(app, host="0.0.0.0", port=port)
 
