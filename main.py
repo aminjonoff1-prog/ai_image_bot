@@ -1,8 +1,5 @@
-import asyncio
 import os
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
-
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, FSInputFile, BotCommand
 from aiogram.filters import Command
@@ -11,7 +8,7 @@ from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
 from pptx.dml.color import RGBColor
 
-# config.py dan GEMINI_API_KEY ham chaqiriladi
+# config.py dan kalitlarni olish
 try:
     from config import BOT_TOKEN, FREE_LIMIT, GEMINI_API_KEY
 except ImportError:
@@ -24,37 +21,39 @@ from image_gen import generate_image
 
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 import google.generativeai as genai
+import asyncio
 
 # --- GEMINI SOZLAMALARI ---
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY.strip())
-    # Asosiy matn yaratish uchun kuchli modelni tanlaymiz
     gemini_model = genai.GenerativeModel('gemini-1.5-pro-latest')
-
-# === RENDER PORT MUAMMOSI UCHUN SOXTA SERVER ===
-class DummyHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot serverda muammosiz ishlamoqda!")
-
-def run_dummy_server():
-    port = int(os.environ.get('PORT', 8000))
-    server = HTTPServer(('0.0.0.0', port), DummyHandler)
-    server.serve_forever()
-
-threading.Thread(target=run_dummy_server, daemon=True).start()
-# ===============================================
 
 bot = Bot(
     token=BOT_TOKEN.strip(),
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 )
 dp = Dispatcher()
-
 user_category = {}
+
+# --- WEBHOOK SOZLAMALARI ---
+# Render bergan web manzilni oladi
+WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
+WEBHOOK_PATH = f"/webhook/{BOT_TOKEN.strip()}"
+WEBHOOK_URL_FULL = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
+
+async def on_startup(bot: Bot):
+    if WEBHOOK_URL:
+        await bot.set_webhook(WEBHOOK_URL_FULL)
+    await bot.set_my_commands([BotCommand(command="start", description="Boshlash")])
+
+async def on_shutdown(bot: Bot):
+    await bot.delete_webhook()
+
+dp.startup.register(on_startup)
+dp.shutdown.register(on_shutdown)
 
 # --- GEMINI ORQALI MATN OLISH FUNKSIYASI ---
 async def get_ai_content(topic, slide_num):
@@ -77,30 +76,26 @@ async def get_ai_content(topic, slide_num):
         print(f"Gemini xatosi: {e}")
         return f"{topic} mavzusi bo'yicha akademik matn (Vaqtinchalik xato)."
 
-# --- PREZENTATSIYA YARATISH FUNKSIYASI (Xalqaro standartlarda) ---
+# --- PREZENTATSIYA YARATISH FUNKSIYASI ---
 async def create_presentation(topic, user_id):
     prs = Presentation()
     
-    # 1-slayd: Titul (Professional Title Slide)
     title_slide_layout = prs.slide_layouts[0] 
     slide = prs.slides.add_slide(title_slide_layout)
     title = slide.shapes.title
     subtitle = slide.placeholders[1]
     
-    # Titul sarlavhasi dizayni
     title.text = topic.upper()
     if title.text_frame.paragraphs:
         title.text_frame.paragraphs[0].font.bold = True
-        title.text_frame.paragraphs[0].font.color.rgb = RGBColor(0, 51, 102) # To'q ko'k rang
+        title.text_frame.paragraphs[0].font.color.rgb = RGBColor(0, 51, 102)
     
     subtitle.text = "Tahliliy Hisobot\nGemini AI yordamida avtomatik tayyorlandi"
     
-    # 25 tagacha slayd yaratish (1 titul + 24 matnli slayd)
     for i in range(2, 26):
-        slide_layout = prs.slide_layouts[1] # Sarlavha va matn qolipi
+        slide_layout = prs.slide_layouts[1]
         slide = prs.slides.add_slide(slide_layout)
         
-        # Sarlavha dizayni (chapga tekislangan, to'q ko'k rang)
         title_shape = slide.shapes.title
         title_shape.text = f"{i}-bo'lim: {topic[:30]}..."
         if title_shape.text_frame.paragraphs:
@@ -109,10 +104,8 @@ async def create_presentation(topic, user_id):
             p.font.color.rgb = RGBColor(0, 51, 102)
             p.alignment = PP_ALIGN.LEFT
         
-        # Matnni Gemini'dan olish
         ai_text = await get_ai_content(topic, i)
         
-        # Asosiy matn dizayni
         body_shape = slide.placeholders[1]
         tf = body_shape.text_frame
         tf.text = ai_text
@@ -121,7 +114,6 @@ async def create_presentation(topic, user_id):
             paragraph.font.size = Pt(15)
             paragraph.font.name = 'Arial'
             
-        # Footer qo'shish (Slaydning pastki qismi)
         left = Inches(0.5)
         top = Inches(7.0)
         width = Inches(9.0)
@@ -131,7 +123,7 @@ async def create_presentation(topic, user_id):
         p_footer = tf_footer.add_paragraph()
         p_footer.text = f"Maxfiy | Loyiha: {topic[:15]}... | Slayd {i}"
         p_footer.font.size = Pt(10)
-        p_footer.font.color.rgb = RGBColor(128, 128, 128) # Kulrang
+        p_footer.font.color.rgb = RGBColor(128, 128, 128)
         
     file_name = f"prezentatsiya_{user_id}.pptx"
     prs.save(file_name)
@@ -148,7 +140,6 @@ async def start(m: Message):
 ]))
 async def category(m: Message):
     user_category[m.from_user.id] = m.text
-    # Reklama banneri uchun maxsus tushuntirish xabari
     if m.text == "🏢 Reklama Banneri":
         await m.answer(f"✍️ Bannerda qanday tasvirlar bo'lishini xohlaysiz?\n\n"
                        f"❗ Eslatma: AI matnlarni xato yozadi. Shuning uchun faqat fon, muhit va tasvirlarni yozing (masalan: 'kitob ushlagan bola, o'quv markazi foni'). Matn uchun bo'sh joy tashlab beriladi.")
@@ -178,7 +169,6 @@ async def generate(m: Message):
             await m.answer(f"Xatolik: {e}")
         await msg.delete()
     else:
-        # Rasm yaratish qismi
         msg = await m.answer("⏳ Rasm chizilyapti...")
         file, error = await generate_image(m.text, category_name)
         if file:
@@ -188,9 +178,19 @@ async def generate(m: Message):
             await m.answer(f"Xatolik: {error}")
         await msg.delete()
 
-async def main():
-    await bot.set_my_commands([BotCommand(command="start", description="Boshlash")])
-    await dp.start_polling(bot)
+# --- SERVERNI ISHGA TUSHIRISH ---
+def main():
+    app = web.Application()
+    webhook_requests_handler = SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot,
+    )
+    webhook_requests_handler.register(app, path=WEBHOOK_PATH)
+    setup_application(app, dp, bot=bot)
+    
+    # Render muhitidagi portni olish (agar topolmasa 8000)
+    port = int(os.environ.get("PORT", 8000))
+    web.run_app(app, host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
