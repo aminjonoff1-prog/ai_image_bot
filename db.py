@@ -62,3 +62,25 @@ def check_limit(user_id, free_limit):
         # Baza xatosi yoki botni start bosmasdan ishlatmoqchi bo'lsa
         conn.close()
         return False
+
+# --- ADMIN PANEL UCHUN QO'SHIMCHA FUNKSIYALAR ---
+
+def get_stats():
+    # Jami foydalanuvchilar va jami ishlatilgan limitlarni hisoblash
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(user_id), SUM(usage_count) FROM users")
+    result = cursor.fetchone()
+    conn.close()
+    # Agar baza bo'sh bo'lsa None qaytmasligi uchun 0 yozamiz
+    return result[0] or 0, result[1] or 0
+
+def get_all_users():
+    # Xabar tarqatish uchun barcha ID larni olish
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM users")
+    users = cursor.fetchall()
+    conn.close()
+    # Faqat ID lardan iborat toza ro'yxat qaytarish
+    return [user[0] for user in users]
