@@ -77,10 +77,18 @@ async def create_presentation(topic, user_id):
 async def start(m: Message):
     await m.answer("👋 Salom! Kategoriya tanlang.", reply_markup=main_menu())
 
-@dp.message(F.text.in_(["🎨 Logo", "🖼 Realistik", "📱 Avatar", "🏠 Interyer", "🌄 Landscape", "📊 Prezentatsiya"]))
+@dp.message(F.text.in_([
+    "🎨 Logo", "🖼 Realistik", "📱 Avatar", "🏠 Interyer", "🌄 Landscape", "📊 Prezentatsiya",
+    "🖥 UI/UX Web Dizayn", "🏢 3D Arxitektura", "💎 Brending", "🎮 Konsept Art", "🏢 Reklama Banneri"
+]))
 async def category(m: Message):
     user_category[m.from_user.id] = m.text
-    await m.answer(f"✍️ {m.text} uchun mavzu yoki tavsif yozing:")
+    # Reklama banneri uchun maxsus tushuntirish xabari
+    if m.text == "🏢 Reklama Banneri":
+        await m.answer(f"✍️ Bannerda qanday tasvirlar bo'lishini xohlaysiz?\n\n"
+                       f"❗ Eslatma: AI matnlarni xato yozadi. Shuning uchun faqat fon, muhit va tasvirlarni yozing (masalan: 'kitob ushlagan bola, o'quv markazi foni'). Matn uchun bo'sh joy tashlab beriladi.")
+    else:
+        await m.answer(f"✍️ {m.text} uchun mavzu yoki tavsif yozing:")
 
 @dp.message()
 async def generate(m: Message):
