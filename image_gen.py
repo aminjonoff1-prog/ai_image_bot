@@ -6,25 +6,30 @@ from config import STABILITY_API_KEY
 URL = "https://api.stability.ai/v2beta/stable-image/generate/ultra"
 
 CATEGORY = {
-    "🎨 Logo": "modern logo design, minimalist, vector",
-    "🖼 Realistik": "ultra realistic photo",
-    "📱 Avatar": "portrait, profile picture",
-    "🏠 Interyer": "interior design, modern house",
-    "🌄 Landscape": "beautiful landscape, nature"
+    # Eski toifalar ... (Logo, Realistik va hk.)
+    
+    # YANGI: Murakkab tashqi reklama banneri foni
+    "🏢 Reklama Banneri": "professional advertising banner background, outdoor signage mockup, extremely high detail, cinematic lighting, corporate style, volumetric lighting, photorealistic. WARNING: This will generate ONLY the background imagery, not readable text."
 }
 
-async def process_prompt(text):
+async def process_prompt(text, category):
     try:
         translated = await asyncio.to_thread(
             GoogleTranslator(source='auto', target='en').translate,
             text
         )
-        return translated + ", highly detailed, cinematic lighting, 8k"
+        
+        # Banner uchun maxsus ko'rsatmalar
+        if category == "🏢 Reklama Banneri":
+            # Biz AIdan matn yozmaslikni iltimos qilamiz, chunki u xato yozadi.
+            # O'rniga, matn uchun bo'sh joy qoldirishni so'raymiz.
+            return f"masterpiece, detailed imagery of {translated}, large empty spaces for typography, no text, clean composition, 8k resolution"
+        
+        return translated + ", masterpiece, highly detailed, 8k resolution"
     except:
         return text
 
 async def generate_image(prompt, category):
-    # Config'dan olingan kalitdagi ortiqcha bo'sh joylarni tozalaymiz
     api_key = STABILITY_API_KEY.strip() if STABILITY_API_KEY else ""
     
     headers = {
@@ -33,7 +38,16 @@ async def generate_image(prompt, category):
     }
 
     base = CATEGORY.get(category, "")
-    final_prompt = await process_prompt(base + ", " + prompt)
+    # Promtni qayta ishlashga toifani ham yuboramiz
+    final_prompt = await process_prompt(prompt, category)
+
+    # O'lchamni tanlash (Bannerlar uchun odatda yotiq 16:9 yoki tik 9:16)
+    # Foydalanuvchi 100x70 degani yotiq benerni anglatadi (tasavvurda).
+    aspect_ratio = "16:9" 
+    if category == "🎨 Logo":
+        aspect_ratio = "1:1"
+    elif category == "📱 Avatar":
+        aspect_ratio = "9:16"
 
     async with httpx.AsyncClient(timeout=120) as client:
         r = await client.post(
@@ -41,7 +55,8 @@ async def generate_image(prompt, category):
             headers=headers,
             data={
                 "prompt": final_prompt,
-                "output_format": "png"
+                "output_format": "png",
+                "aspect_ratio": aspect_ratio
             },
             files={"none": (None, "")}
         )
