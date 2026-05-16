@@ -10,12 +10,13 @@ from pptx.dml.color import RGBColor
 
 # config.py dan kalitlarni olish
 try:
-    from config import BOT_TOKEN, FREE_LIMIT, GEMINI_API_KEY
+    from config import BOT_TOKEN, FREE_LIMIT, GEMINI_API_KEY, ADMIN_ID
 except ImportError:
     from config import BOT_TOKEN, FREE_LIMIT
     GEMINI_API_KEY = None
+    ADMIN_ID = 0
 
-from db import init_db, add_user, check_limit
+from db import check_limit, init_db, add_user, get_stats, get_all_users
 from keyboards import main_menu
 from image_gen import generate_image
 
@@ -130,6 +131,43 @@ async def create_presentation(topic, user_id):
     return file_name
 
 # --- BOT HANDLERLARI ---
+# --- YASHIRIN ADMIN PANEL ---
+@dp.message(Command("admin"))
+async def admin_panel(m: Message):
+    # Faqat admin ishlata oladi
+    if m.from_user.id != ADMIN_ID:
+        return
+    
+    users_count, total_usage = get_stats()
+    text = (f"📊 <b>Bot Statistikasi</b>\n\n"
+            f"👥 Jami foydalanuvchilar: {users_count} ta\n"
+            f"🎨 Jami dizayn/slayd yasalgan: {total_usage} marta")
+    await m.answer(text)
+
+@dp.message(Command("send"))
+async def broadcast(m: Message):
+    # Hammaga xabar tarqatish (Faqat admin uchun)
+    if m.from_user.id != ADMIN_ID:
+        return
+        
+    text = m.text.replace("/send", "").strip()
+    if not text:
+        await m.answer("❗ Xabar matnini kiriting.\nMisol: <code>/send Assalomu alaykum, botimizga yangi dizaynlar qo'shildi!</code>")
+        return
+        
+    users = get_all_users()
+    count = 0
+    msg = await m.answer("⏳ Xabar yuborilmoqda...")
+    
+    for user_id in users:
+        try:
+            await bot.send_message(user_id, text)
+            count += 1
+            await asyncio.sleep(0.05) # Telegram limitiga tushmaslik uchun (Spam himoyasi)
+        except Exception:
+            pass # Agar foydalanuvchi botni bloklagan bo'lsa, xato bermay o'tkazib yuboradi
+            
+    await msg.edit_text(f"✅ Xabar {count} ta foydalanuvchiga muvaffaqiyatli yuborildi.")
 @dp.message(Command("start"))
 async def start(m: Message):
     # Foydalanuvchini bazaga yozib qo'yamiz
