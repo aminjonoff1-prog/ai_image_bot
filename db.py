@@ -7,25 +7,31 @@ def init_db():
     # Baza faylini yaratish va jadvalni shakllantirish
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
+    
+    # Baza jadvalining asosiy strukturasini yaratish (IF NOT EXISTS)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
             username TEXT,
-            full_name TEXT,
+            full_name TEXT,  # Asosiy yaratishda ham bo'lishi kerak
             usage_count INTEGER DEFAULT 0,
             joined_date TEXT
         )
     ''')
-    
-    # --- RENDER XATOSINI TARTIBGA SOLISH ---
-    # Agar eski bazada 'username' ustuni yo'q bo'lsa, uni kod o'zi avtomatik qo'shib qo'yadi
+
+    # --- RENDER XATOSINI TARTIBGA SOLISH (MIGRATSIYA) ---
+    # Jadval ustunlari ro'yxatini olamiz
     cursor.execute("PRAGMA table_info(users)")
     columns = [column[1] for column in cursor.fetchall()]
     
-    if 'username' not in columns:
-        cursor.execute("ALTER TABLE users ADD COLUMN username TEXT")
-        print("Baza yangilandi: 'username' ustuni qo'shildi.")
-    # --------------------------------------
+    # Agar 'full_name' ustuni jadvalda mavjud bo'lmasa, uni qo'shamiz
+    if 'full_name' not in columns:
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN full_name TEXT")
+            print("INFO: 'full_name' ustuni bazaga muvaffaqiyatli qo'shildi.")
+        except sqlite3.OperationalError as e:
+            print(f"XATO: Ustun qo'shishda xatolik: {e}")
+    # ---------------------------------------------------
 
     conn.commit()
     conn.close()
