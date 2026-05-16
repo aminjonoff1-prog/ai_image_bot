@@ -3,4 +3,5 @@ aiohttp
 python-pptx
 python-dotenv
 httpx
+google-generativeai
 deep-translator
