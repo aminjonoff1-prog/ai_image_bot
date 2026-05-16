@@ -82,5 +82,23 @@ def get_all_users():
     cursor.execute("SELECT user_id FROM users")
     users = cursor.fetchall()
     conn.close()
+def add_premium_limit(user_id, amount):
+    # Foydalanuvchiga admin tomonidan limit qo'shish
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    
+    # Avval foydalanuvchi bazada borligini tekshiramiz
+    cursor.execute("SELECT usage_count FROM users WHERE user_id = ?", (user_id,))
+    result = cursor.fetchone()
+    
+    if result:
+        # Hozirgi ishlatgan hisobini kamaytiramiz (yoki limitini ko'paytiramiz)
+        # Bizning tizimda usage_count < FREE_LIMIT ishlagani uchun, count ni minus qilsak limit ko'payadi
+        cursor.execute("UPDATE users SET usage_count = usage_count - ? WHERE user_id = ?", (amount, user_id))
+        conn.commit()
+        conn.close()
+        return True
+    conn.close()
+    return False
     # Faqat ID lardan iborat toza ro'yxat qaytarish
     return [user[0] for user in users]
