@@ -15,7 +15,7 @@ except ImportError:
     from config import BOT_TOKEN, FREE_LIMIT
     GEMINI_API_KEY = None
 
-from db import check_limit
+from db import init_db, add_user, check_limit
 from keyboards import main_menu
 from image_gen import generate_image
 
@@ -132,6 +132,8 @@ async def create_presentation(topic, user_id):
 # --- BOT HANDLERLARI ---
 @dp.message(Command("start"))
 async def start(m: Message):
+    # Foydalanuvchini bazaga yozib qo'yamiz
+    add_user(m.from_user.id, m.from_user.username, m.from_user.full_name)
     await m.answer("👋 Salom! Kategoriya tanlang.", reply_markup=main_menu())
 
 @dp.message(F.text.in_([
@@ -179,9 +181,13 @@ async def generate(m: Message):
         await msg.delete()
 
 # --- SERVERNI ISHGA TUSHIRISH ---
+# --- SERVERNI ISHGA TUSHIRISH ---
 def main():
+    init_db() # Baza ishga tushadi va users.db fayli yaratiladi
+    
     app = web.Application()
     webhook_requests_handler = SimpleRequestHandler(
+# ... qolgan kodlar o'zgarishsiz qoladi
         dispatcher=dp,
         bot=bot,
     )
