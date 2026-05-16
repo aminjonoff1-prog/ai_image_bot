@@ -8,5 +8,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 STABILITY_API_KEY = os.getenv("STABILITY_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 FREE_LIMIT = int(os.getenv("FREE_LIMIT", 5))
+DB_NAME = "users_v2.db"
 
 print("Kofiglar xavfsiz yuklandi OK")
