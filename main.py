@@ -8,13 +8,27 @@ from aiogram.types import Message, FSInputFile, BotCommand
 from aiogram.filters import Command
 from pptx import Presentation
 
-from config import BOT_TOKEN, FREE_LIMIT
+# config.py dan GEMINI_API_KEY ham chaqiriladi
+try:
+    from config import BOT_TOKEN, FREE_LIMIT, GEMINI_API_KEY
+except ImportError:
+    from config import BOT_TOKEN, FREE_LIMIT
+    GEMINI_API_KEY = None
+
 from db import check_limit
 from keyboards import main_menu
 from image_gen import generate_image
 
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+
+import google.generativeai as genai
+
+# --- GEMINI SOZLAMALARI ---
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY.strip())
+    # Asosiy matn yaratish uchun kuchli modelni tanlaymiz
+    gemini_model = genai.GenerativeModel('gemini-1.5-pro-latest')
 
 # === RENDER PORT MUAMMOSI UCHUN SOXTA SERVER ===
 class DummyHandler(BaseHTTPRequestHandler):
@@ -39,10 +53,26 @@ dp = Dispatcher()
 
 user_category = {}
 
-# --- MATN OLISH FUNKSIYASI (Hugging Face olib tashlandi) ---
+# --- GEMINI ORQALI MATN OLISH FUNKSIYASI ---
 async def get_ai_content(topic, slide_num):
-    # Boshqa AI (masalan, OpenRouter) ulanmaguncha shu vaqtinchalik matn chiqadi
-    return f"{topic} mavzusining {slide_num}-qismi haqida ilmiy va akademik ma'lumotlar."
+    if not GEMINI_API_KEY:
+        return f"{topic} mavzusining {slide_num}-qismi haqida ma'lumotlar. (API kalit kiritilmagan)"
+
+    prompt = (f"Siz professional tahlilchisiz. '{topic}' mavzusida 25 ta slayddan iborat "
+              f"loyihaning {slide_num}-qismi uchun matn yozishingiz kerak. "
+              f"Matn xalqaro konsalting standartlari uslubida, qisqa, tizimli, aniq faktlarga "
+              f"asoslangan va universitet darajasiga mos akademik o'zbek tilida bo'lsin. "
+              f"Hech qanday kirish so'zlarisiz, to'g'ridan-to'g'ri slayd matnini bering. "
+              f"Agar tahliliy grafiklar bo'yicha ma'lumot yozsangiz, Toshkent ko'k, Buxoro yashil, "
+              f"Samarqand sabzirang va Namangan binafsha rangda ifodalanishini alohida ta'kidlang.")
+    
+    try:
+        response = await asyncio.to_thread(gemini_model.generate_content, prompt)
+        text = response.text.strip()
+        return text if text else f"{topic} bo'yicha tahliliy ma'lumotlar."
+    except Exception as e:
+        print(f"Gemini xatosi: {e}")
+        return f"{topic} mavzusi bo'yicha akademik matn (Vaqtinchalik xato)."
 
 # --- PREZENTATSIYA YARATISH FUNKSIYASI (25 ta slayd) ---
 async def create_presentation(topic, user_id):
@@ -52,7 +82,7 @@ async def create_presentation(topic, user_id):
     slide_layout = prs.slide_layouts[0] 
     slide = prs.slides.add_slide(slide_layout)
     slide.shapes.title.text = topic.upper()
-    slide.placeholders[1].text = "Avtomatik tayyorlandi"
+    slide.placeholders[1].text = "Gemini AI yordamida tayyorlandi"
     
     # 25 tagacha slayd yaratish
     for i in range(2, 26):
@@ -62,7 +92,7 @@ async def create_presentation(topic, user_id):
         # Sarlavha
         slide.shapes.title.text = f"{topic} - {i}-bo'lim"
         
-        # Matn olish
+        # Gemini'dan haqiqiy matn olish
         ai_text = await get_ai_content(topic, i)
         
         # Slaydga matnni joylash
