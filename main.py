@@ -1,5 +1,6 @@
 import os
 import asyncio
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, FSInputFile, BotCommand
 from aiogram.filters import Command
@@ -23,8 +24,7 @@ from db import (
     add_user, 
     get_stats, 
     get_all_users, 
-    add_premium_limit,
-    get_limit_info
+    add_premium_limit
 )
 
 from keyboards import main_menu
@@ -38,6 +38,7 @@ from aiogram.enums import ParseMode
 import google.generativeai as genai
 import logging
 import time
+import threading
 
 # Logging sozlamalari
 logging.basicConfig(level=logging.INFO)
@@ -141,24 +142,6 @@ async def create_presentation(topic, user_id):
 async def start(m: Message):
     add_user(m.from_user.id, m.from_user.username, m.from_user.full_name)
     await m.answer("👋 Salom! Kategoriya tanlang.", reply_markup=main_menu())
-
-@dp.message(Command("limit"))
-async def show_limit(m: Message):
-    user_id = m.from_user.id
-    info = get_limit_info(user_id, FREE_LIMIT)
-    
-    if info:
-        text = (
-            f"📊 <b>Sizning limitlaringiz</b>\n\n"
-            f"🎨 Ishlatilgan: {info['usage_count']} / {info['total_limit']}\n"
-            f"💰 Premium limit: +{info['premium_limit']}\n"
-            f"✅ Qolgan: {info['remaining']}\n\n"
-            f"📌 Bepul limit: {FREE_LIMIT} ta"
-        )
-    else:
-        text = "❌ Ma'lumot topilmadi. /start bosing"
-    
-    await m.answer(text)
 
 @dp.message(Command("admin"))
 async def admin_panel(m: Message):
@@ -268,8 +251,7 @@ async def generate(m: Message):
             "👑 <b>Biznes (1 oy cheksiz)</b> - 99,000 so'm\n\n"
             "💳 Karta: <code>5614 6805 1876 1602</code>\n"
             "📱 Admin: @muhammad_amin07\n"
-            f"🆔 Sizning ID: <code>{user_id}</code>\n\n"
-            "📌 Limit holatini bilish uchun: /limit"
+            f"🆔 Sizning ID: <code>{user_id}</code>"
         )
         await m.answer(tariff_text)
         return
@@ -355,7 +337,30 @@ async def generate(m: Message):
             except Exception:
                 pass
 
-# --- ASOSIY FUNKSIYA (Polling bilan) ---
+# --- WEB SERVER (UptimeRobot uchun) ---
+async def run_web_server():
+    """Oddiy web server - UptimeRobot uchun"""
+    app = web.Application()
+    
+    async def health_check(request):
+        return web.Response(text="OK", status=200)
+    
+    app.router.add_get('/', health_check)
+    app.router.add_get('/health', health_check)
+    
+    port = int(os.environ.get("PORT", 8080))
+    
+    # Web serverni ishga tushirish
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info(f"✅ Web server ishga tushdi: http://0.0.0.0:{port}")
+    
+    # Cheksiz ushlab turish
+    await asyncio.Future()
+
+# --- ASOSIY FUNKSIYA ---
 async def main():
     init_db()
     
@@ -366,13 +371,18 @@ async def main():
     # Bot komandalarini o'rnatish
     await bot.set_my_commands([
         BotCommand(command="start", description="🚀 Botni ishga tushirish"),
-        BotCommand(command="limit", description="📊 Limit holatini ko'rish"),
     ])
     
-    logger.info("🚀 Bot polling orqali ishga tushmoqda...")
+    logger.info("🚀 Bot ishga tushmoqda...")
     
-    # Polling orqali ishga tushirish
-    await dp.start_polling(bot, skip_updates=True)
+    # Web serverni alohida taskda ishga tushirish
+    web_task = asyncio.create_task(run_web_server())
+    
+    # Polling ni ishga tushirish
+    polling_task = asyncio.create_task(dp.start_polling(bot, skip_updates=True))
+    
+    # Ikkalasini ham kuzatish
+    await asyncio.gather(web_task, polling_task)
 
 if __name__ == "__main__":
     try:
