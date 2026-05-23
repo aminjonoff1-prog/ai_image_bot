@@ -1,6 +1,5 @@
 import os
 import asyncio
-from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, FSInputFile, BotCommand
 from aiogram.filters import Command
@@ -9,7 +8,7 @@ from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
 from pptx.dml.color import RGBColor
 
-# Config import - default qiymatlar bilan
+# Config import
 try:
     from config import BOT_TOKEN, FREE_LIMIT, GEMINI_API_KEY, ADMIN_ID
 except ImportError:
@@ -18,14 +17,14 @@ except ImportError:
     GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
     ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 
-# DB funksiyalari
 from db import (
     check_limit, 
     init_db, 
     add_user, 
     get_stats, 
     get_all_users, 
-    add_premium_limit
+    add_premium_limit,
+    get_limit_info
 )
 
 from keyboards import main_menu
@@ -35,9 +34,14 @@ from audio_gen import generate_audio
 
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 import google.generativeai as genai
+import logging
+import time
+
+# Logging sozlamalari
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # --- GEMINI SOZLAMALARI ---
 gemini_model = None
@@ -45,8 +49,9 @@ if GEMINI_API_KEY:
     try:
         genai.configure(api_key=GEMINI_API_KEY.strip())
         gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+        logger.info("Gemini muvaffaqiyatli yuklandi")
     except Exception as e:
-        print(f"Gemini init xatosi: {e}")
+        logger.error(f"Gemini init xatosi: {e}")
 
 bot = Bot(
     token=BOT_TOKEN.strip(),
@@ -54,22 +59,6 @@ bot = Bot(
 )
 dp = Dispatcher()
 user_category = {}
-
-# --- WEBHOOK SOZLAMALARI ---
-WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
-WEBHOOK_PATH = f"/webhook/{BOT_TOKEN.strip()}"
-WEBHOOK_URL_FULL = f"{WEBHOOK_URL}{WEBHOOK_PATH}" if WEBHOOK_URL else ""
-
-async def on_startup(bot: Bot):
-    if WEBHOOK_URL:
-        await bot.set_webhook(WEBHOOK_URL_FULL)
-    await bot.set_my_commands([BotCommand(command="start", description="Boshlash")])
-
-async def on_shutdown(bot: Bot):
-    await bot.delete_webhook()
-
-dp.startup.register(on_startup)
-dp.shutdown.register(on_shutdown)
 
 # --- GEMINI MATN OLISH FUNKSIYASI ---
 async def get_ai_content(topic, slide_num):
@@ -89,10 +78,10 @@ async def get_ai_content(topic, slide_num):
         text = response.text.strip()
         return text if text else f"{topic} bo'yicha tahliliy ma'lumotlar."
     except Exception as e:
-        print(f"Gemini xatosi: {e}")
+        logger.error(f"Gemini xatosi: {e}")
         return f"{topic} mavzusi bo'yicha akademik matn."
 
-# --- PREZENTATSIYA YARATISH (25 ta slayd) ---
+# --- PREZENTATSIYA YARATISH ---
 async def create_presentation(topic, user_id):
     prs = Presentation()
     
@@ -143,16 +132,33 @@ async def create_presentation(topic, user_id):
         p_footer.font.size = Pt(10)
         p_footer.font.color.rgb = RGBColor(128, 128, 128)
     
-    file_name = f"prezentatsiya_{user_id}_{int(asyncio.get_event_loop().time())}.pptx"
+    file_name = f"prezentatsiya_{user_id}_{int(time.time())}.pptx"
     prs.save(file_name)
     return file_name
 
 # --- BOT HANDLERLARI ---
-
 @dp.message(Command("start"))
 async def start(m: Message):
     add_user(m.from_user.id, m.from_user.username, m.from_user.full_name)
     await m.answer("👋 Salom! Kategoriya tanlang.", reply_markup=main_menu())
+
+@dp.message(Command("limit"))
+async def show_limit(m: Message):
+    user_id = m.from_user.id
+    info = get_limit_info(user_id, FREE_LIMIT)
+    
+    if info:
+        text = (
+            f"📊 <b>Sizning limitlaringiz</b>\n\n"
+            f"🎨 Ishlatilgan: {info['usage_count']} / {info['total_limit']}\n"
+            f"💰 Premium limit: +{info['premium_limit']}\n"
+            f"✅ Qolgan: {info['remaining']}\n\n"
+            f"📌 Bepul limit: {FREE_LIMIT} ta"
+        )
+    else:
+        text = "❌ Ma'lumot topilmadi. /start bosing"
+    
+    await m.answer(text)
 
 @dp.message(Command("admin"))
 async def admin_panel(m: Message):
@@ -225,7 +231,6 @@ async def give_limit_command(m: Message):
     except (IndexError, ValueError):
         await m.answer("❗ Xato format. To'g'ri foydalanish:\n<code>/give 512345678 30</code>")
 
-# Kategoriya handler
 CATEGORIES = [
     "🎨 Logo", "🖼 Realistik", "📱 Avatar", "🏠 Interyer", 
     "🌄 Landscape", "📊 Prezentatsiya", "🖥 UI/UX Web Dizayn",
@@ -263,12 +268,14 @@ async def generate(m: Message):
             "👑 <b>Biznes (1 oy cheksiz)</b> - 99,000 so'm\n\n"
             "💳 Karta: <code>5614 6805 1876 1602</code>\n"
             "📱 Admin: @muhammad_amin07\n"
-            f"🆔 Sizning ID: <code>{user_id}</code>"
+            f"🆔 Sizning ID: <code>{user_id}</code>\n\n"
+            "📌 Limit holatini bilish uchun: /limit"
         )
         await m.answer(tariff_text)
         return
 
     category_name = user_category[user_id]
+    del user_category[user_id]
 
     # Prezentatsiya
     if category_name == "📊 Prezentatsiya":
@@ -348,26 +355,29 @@ async def generate(m: Message):
             except Exception:
                 pass
 
-# --- SERVER ---
-def main():
+# --- ASOSIY FUNKSIYA (Polling bilan) ---
+async def main():
     init_db()
     
     if not BOT_TOKEN:
-        print("❌ BOT_TOKEN aniqlanmagan!")
+        logger.error("❌ BOT_TOKEN aniqlanmagan!")
         return
     
-    app = web.Application()
+    # Bot komandalarini o'rnatish
+    await bot.set_my_commands([
+        BotCommand(command="start", description="🚀 Botni ishga tushirish"),
+        BotCommand(command="limit", description="📊 Limit holatini ko'rish"),
+    ])
     
-    webhook_requests_handler = SimpleRequestHandler(
-        dispatcher=dp,
-        bot=bot,
-    )
-    webhook_requests_handler.register(app, path=WEBHOOK_PATH)
-    setup_application(app, dp, bot=bot)
+    logger.info("🚀 Bot polling orqali ishga tushmoqda...")
     
-    port = int(os.environ.get("PORT", 8000))
-    print(f"🚀 Bot ishga tushdi. Port: {port}")
-    web.run_app(app, host="0.0.0.0", port=port)
+    # Polling orqali ishga tushirish
+    await dp.start_polling(bot, skip_updates=True)
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("❌ Bot to'xtatildi")
+    except Exception as e:
+        logger.error(f"❌ Kutilmagan xatolik: {e}")
