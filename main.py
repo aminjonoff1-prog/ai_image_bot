@@ -9,20 +9,29 @@ from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
 from pptx.dml.color import RGBColor
 
-# config.py dan kalitlarni olish
+# Config import - default qiymatlar bilan
 try:
     from config import BOT_TOKEN, FREE_LIMIT, GEMINI_API_KEY, ADMIN_ID
 except ImportError:
-    from config import BOT_TOKEN, FREE_LIMIT
-    GEMINI_API_KEY = None
-    ADMIN_ID = 0
+    BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+    FREE_LIMIT = int(os.environ.get("FREE_LIMIT", "5"))
+    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+    ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 
-# TO'G'RILANDI: get_stats va get_all_users import qatoriga qo'shildi
-from db import check_limit, init_db, add_user, get_stats, get_all_users, add_premium_limit
+# DB funksiyalari
+from db import (
+    check_limit, 
+    init_db, 
+    add_user, 
+    get_stats, 
+    get_all_users, 
+    add_premium_limit
+)
+
 from keyboards import main_menu
 from image_gen import generate_image
 from video_gen import generate_video
-from audio_gen import generate_audio  
+from audio_gen import generate_audio
 
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -31,9 +40,13 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 import google.generativeai as genai
 
 # --- GEMINI SOZLAMALARI ---
+gemini_model = None
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY.strip())
-    gemini_model = genai.GenerativeModel('gemini-1.5-pro-latest')
+    try:
+        genai.configure(api_key=GEMINI_API_KEY.strip())
+        gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+    except Exception as e:
+        print(f"Gemini init xatosi: {e}")
 
 bot = Bot(
     token=BOT_TOKEN.strip(),
@@ -45,7 +58,7 @@ user_category = {}
 # --- WEBHOOK SOZLAMALARI ---
 WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
 WEBHOOK_PATH = f"/webhook/{BOT_TOKEN.strip()}"
-WEBHOOK_URL_FULL = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
+WEBHOOK_URL_FULL = f"{WEBHOOK_URL}{WEBHOOK_PATH}" if WEBHOOK_URL else ""
 
 async def on_startup(bot: Bot):
     if WEBHOOK_URL:
@@ -58,18 +71,18 @@ async def on_shutdown(bot: Bot):
 dp.startup.register(on_startup)
 dp.shutdown.register(on_shutdown)
 
-# --- GEMINI MATN OLISH FUNKSIYASI (Prezentatsiya uchun) ---
+# --- GEMINI MATN OLISH FUNKSIYASI ---
 async def get_ai_content(topic, slide_num):
-    if not GEMINI_API_KEY:
-        return f"{topic} mavzusining {slide_num}-qismi haqida ma'lumotlar. (API kalit kiritilmagan)"
+    if not gemini_model:
+        return f"{topic} mavzusining {slide_num}-qismi haqida ma'lumotlar."
 
-    prompt = (f"Siz professional tahlilchisiz. '{topic}' mavzusida 25 ta slayddan iborat "
-              f"loyihaning {slide_num}-qismi uchun matn yozishingiz kerak. "
-              f"Matn xalqaro konsalting standartlari uslubida, qisqa, tizimli, aniq faktlarga "
-              f"asoslangan va universitet darajasiga mos akademik o'zbek tilida bo'lsin. "
-              f"Hech qanday kirish so'zlarisiz, to'g'ridan-to'g'ri slayd matnini bering. "
-              f"Agar tahliliy grafiklar bo'yicha ma'lumot yozsangiz, Toshkent ko'k, Buxoro yashil, "
-              f"Samarqand sabzirang va Namangan binafsha rangda ifodalanishini alohida ta'kidlang.")
+    prompt = (
+        f"Siz professional tahlilchisiz. '{topic}' mavzusida prezentatsiyaning "
+        f"{slide_num}-slaydi uchun matn yozing. "
+        f"Matn qisqa, tizimli, aniq faktlarga asoslangan bo'lsin. "
+        f"Universitet darajasiga mos akademik o'zbek tilida yozing. "
+        f"Hech qanday kirish so'zlarisiz, to'g'ridan-to'g'ri slayd matnini bering."
+    )
     
     try:
         response = await asyncio.to_thread(gemini_model.generate_content, prompt)
@@ -77,35 +90,36 @@ async def get_ai_content(topic, slide_num):
         return text if text else f"{topic} bo'yicha tahliliy ma'lumotlar."
     except Exception as e:
         print(f"Gemini xatosi: {e}")
-        return f"{topic} mavzusi bo'yicha akademik matn (Vaqtinchalik xato)."
+        return f"{topic} mavzusi bo'yicha akademik matn."
 
-# --- PREZENTATSIYA YARATISH FUNKSIYASI (25 ta slayd) ---
+# --- PREZENTATSIYA YARATISH (25 ta slayd) ---
 async def create_presentation(topic, user_id):
     prs = Presentation()
     
-    title_slide_layout = prs.slide_layouts[0] 
+    # 1-slayd: Sarlavha
+    title_slide_layout = prs.slide_layouts[0]
     slide = prs.slides.add_slide(title_slide_layout)
     title = slide.shapes.title
     subtitle = slide.placeholders[1]
     
     title.text = topic.upper()
-    if title.text_frame.paragraphs:
-        title.text_frame.paragraphs[0].font.bold = True
-        title.text_frame.paragraphs[0].font.color.rgb = RGBColor(0, 51, 102)
+    for paragraph in title.text_frame.paragraphs:
+        paragraph.font.bold = True
+        paragraph.font.color.rgb = RGBColor(0, 51, 102)
     
-    subtitle.text = "Tahliliy Hisobot\nGemini AI yordamida avtomatik tayyorlandi"
+    subtitle.text = "📊 Tahliliy Hisobot\nGemini AI yordamida tayyorlandi"
     
+    # 2-25 slaydlar
     for i in range(2, 26):
         slide_layout = prs.slide_layouts[1]
         slide = prs.slides.add_slide(slide_layout)
         
         title_shape = slide.shapes.title
-        title_shape.text = f"{i}-bo'lim: {topic[:30]}..."
-        if title_shape.text_frame.paragraphs:
-            p = title_shape.text_frame.paragraphs[0]
-            p.font.size = Pt(28)
-            p.font.color.rgb = RGBColor(0, 51, 102)
-            p.alignment = PP_ALIGN.LEFT
+        title_shape.text = f"{i}-bo'lim"
+        for paragraph in title_shape.text_frame.paragraphs:
+            paragraph.font.size = Pt(28)
+            paragraph.font.color.rgb = RGBColor(0, 51, 102)
+            paragraph.alignment = PP_ALIGN.LEFT
         
         ai_text = await get_ai_content(topic, i)
         
@@ -114,21 +128,22 @@ async def create_presentation(topic, user_id):
         tf.text = ai_text
         
         for paragraph in tf.paragraphs:
-            paragraph.font.size = Pt(15)
+            paragraph.font.size = Pt(14)
             paragraph.font.name = 'Arial'
-            
+        
+        # Footer
         left = Inches(0.5)
         top = Inches(7.0)
         width = Inches(9.0)
         height = Inches(0.5)
         txBox = slide.shapes.add_textbox(left, top, width, height)
         tf_footer = txBox.text_frame
-        p_footer = tf_footer.add_paragraph()
-        p_footer.text = f"Maxfiy | Loyiha: {topic[:15]}... | Slayd {i}"
+        p_footer = tf_footer.paragraphs[0]
+        p_footer.text = f"📌 {topic[:30]}... | Slayd {i}/25"
         p_footer.font.size = Pt(10)
         p_footer.font.color.rgb = RGBColor(128, 128, 128)
-        
-    file_name = f"prezentatsiya_{user_id}.pptx"
+    
+    file_name = f"prezentatsiya_{user_id}_{int(asyncio.get_event_loop().time())}.pptx"
     prs.save(file_name)
     return file_name
 
@@ -143,24 +158,32 @@ async def start(m: Message):
 async def admin_panel(m: Message):
     if m.from_user.id != ADMIN_ID:
         return
-    users_count, total_usage = get_stats()
-    text = (f"📊 <b>Bot Statistikasi</b>\n\n"
+    
+    try:
+        users_count, total_usage = get_stats()
+        text = (
+            f"📊 <b>Bot Statistikasi</b>\n\n"
             f"👥 Jami foydalanuvchilar: {users_count} ta\n"
-            f"🎨 Jami media/slayd yasalgan: {total_usage} marta")
-    await m.answer(text)
+            f"🎨 Jami media/slayd yasalgan: {total_usage} marta"
+        )
+        await m.answer(text)
+    except Exception as e:
+        await m.answer(f"Xatolik: {e}")
 
 @dp.message(Command("send"))
 async def broadcast(m: Message):
     if m.from_user.id != ADMIN_ID:
         return
+    
     text = m.text.replace("/send", "").strip()
     if not text:
         await m.answer("❗ Xabar matnini kiriting.\nMisol: <code>/send Assalomu alaykum!</code>")
         return
-        
+    
     users = get_all_users()
     count = 0
     msg = await m.answer("⏳ Xabar yuborilmoqda...")
+    
     for user_id in users:
         try:
             await bot.send_message(user_id, text)
@@ -168,107 +191,146 @@ async def broadcast(m: Message):
             await asyncio.sleep(0.05)
         except Exception:
             pass
-    await msg.edit_text(f"✅ Xabar {count} ta foydalanuvchiga muvaffaqiyatli yuborildi.")
+    
+    await msg.edit_text(f"✅ Xabar {count} ta foydalanuvchiga yuborildi.")
 
 @dp.message(Command("give"))
 async def give_limit_command(m: Message):
     if m.from_user.id != ADMIN_ID:
         return
-        
+    
     try:
         parts = m.text.split()
+        if len(parts) < 3:
+            await m.answer("❗ To'g'ri foydalanish:\n<code>/give [user_id] [miqdor]</code>")
+            return
+        
         target_user_id = int(parts[1])
         amount = int(parts[2])
         
         success = add_premium_limit(target_user_id, amount)
+        
         if success:
             await m.answer(f"✅ Foydalanuvchi <code>{target_user_id}</code> hisobiga +{amount} ta limit qo'shildi!")
             try:
-                await bot.send_message(target_user_id, f"🎉 Premium faollashtirildi!\nHisobingizga +{amount} ta yangi dizayn limiti qo'shildi. Botdan to'liq foydalanishingiz mumkin!")
+                await bot.send_message(
+                    target_user_id, 
+                    f"🎉 Premium faollashtirildi!\nHisobingizga +{amount} ta yangi limit qo'shildi!"
+                )
             except Exception:
                 pass
         else:
-            await m.answer("❌ Bunday ID ga ega foydalanuvchi bazadan topilmadi.")
+            await m.answer("❌ Bunday ID ga ega foydalanuvchi topilmadi.")
+            
     except (IndexError, ValueError):
-        await m.answer("❗ Xato format. To'g'ri foydalanish:\n<code>/give [user_id] [miqdor]</code>\nMisol: <code>/give 512345678 30</code>")
+        await m.answer("❗ Xato format. To'g'ri foydalanish:\n<code>/give 512345678 30</code>")
 
-# TO'G'RILANDI: Ortiqcha takrorlangan ikkinchi 'category' handleri olib tashlandi, barchasi yagona tizimga keltirildi
-@dp.message(F.text.in_([
-    "🎨 Logo", "🖼 Realistik", "📱 Avatar", "🏠 Interyer", "🌄 Landscape", "📊 Prezentatsiya",
-    "🖥 UI/UX Web Dizayn", "🏢 3D Arxitektura", "💎 Brending", "🎮 Konsept Art", "🏢 Reklama Banneri",
-    "🎬 Video Generatsiya", "🎵 Audio/Musiqa"
-]))
+# Kategoriya handler
+CATEGORIES = [
+    "🎨 Logo", "🖼 Realistik", "📱 Avatar", "🏠 Interyer", 
+    "🌄 Landscape", "📊 Prezentatsiya", "🖥 UI/UX Web Dizayn",
+    "🏢 3D Arxitektura", "💎 Brending", "🎮 Konsept Art",
+    "🏢 Reklama Banneri", "🎬 Video Generatsiya", "🎵 Audio/Musiqa"
+]
+
+@dp.message(F.text.in_(CATEGORIES))
 async def category(m: Message):
     user_category[m.from_user.id] = m.text
-    if m.text == "🏢 Reklama Banneri":
-        await m.answer("✍️ Bannerda qanday tasvirlar bo'lishini xohlaysiz?\n\n❗ Eslatma: AI matnlarni xato yozadi. Shuning uchun faqat fon va tasvirlarni yozing. Matn uchun bo'sh joy tashlab beriladi.")
-    elif m.text == "🎬 Video Generatsiya":
-        await m.answer("🎬 <b>Google Veo Video Studio</b>\n\nQanday video yaratishni xohlaysiz? Batafsil yozing, tizim unga mos maxsus ovozli klip tayyorlab beradi.")
-    elif m.text == "🎵 Audio/Musiqa":
-        await m.answer("🎵 <b>Google Lyria 3 Ovoz Studiyasi</b>\n\nQanday janr va kayfiyatda musiqiy fon yaratish kerak? Batafsil yozing (Masalan: 'reklama uchun sokin royal ohangi').")
-    else:
-        await m.answer(f"✍️ {m.text} uchun mavzu yoki tavsif yozing:")
+    
+    messages = {
+        "🏢 Reklama Banneri": "✍️ Bannerda qanday tasvirlar bo'lishini xohlaysiz?\n\n❗ AI matnlarni xato yozadi. Faqat fon va tasvirlarni yozing.",
+        "🎬 Video Generatsiya": "🎬 <b>Google Veo Video Studio</b>\n\nQanday video yaratishni xohlaysiz? Batafsil yozing.",
+        "🎵 Audio/Musiqa": "🎵 <b>Google Lyria 3 Ovoz Studiyasi</b>\n\nQanday musiqa yaratish kerak? (Masalan: 'reklama uchun sokin royal ohangi')"
+    }
+    
+    await m.answer(messages.get(m.text, f"✍️ {m.text} uchun mavzu yoki tavsif yozing:"))
 
 @dp.message()
 async def generate(m: Message):
     user_id = m.from_user.id
+    
     if user_id not in user_category:
-        await m.answer("❗ Avval kategoriya tanlang")
+        await m.answer("❗ Avval kategoriya tanlang /start bosing")
         return
 
+    # Limit tekshirish
     if not check_limit(user_id, FREE_LIMIT):
         tariff_text = (
-            "❌ <b>Sizning bepul limitlaringiz tugadi!</b>\n\n"
-            "Bot faoliyatini davom ettirish va murakkab dizaynlarni yaratish uchun tariflardan birini tanlang:\n\n"
-            "🎨 <b>Start Paket (30 ta limit)</b> - 19,000 so'm\n"
-            "🚀 <b>Professional (100 ta limit)</b> - 49,000 so'm\n"
+            "❌ <b>Bepul limitlaringiz tugadi!</b>\n\n"
+            "💰 Tariflar:\n"
+            "🎨 <b>Start (30 ta)</b> - 19,000 so'm\n"
+            "🚀 <b>Professional (100 ta)</b> - 49,000 so'm\n"
             "👑 <b>Biznes (1 oy cheksiz)</b> - 99,000 so'm\n\n"
-            "💳 <b>To'lov uchun karta (Uzcard/Humo):</b>\n"
-            "<code>5614 6805 1876 1602</code> (Aminjonov Muhammadamin)\n\n"
-            "⚠️ <i>To'lov qilgach, chekni va o'zingizning ID raqamingizni adminga yuboring:</i> @muhammad_amin07\n"
-            f"Sizning ID raqamingiz: <code>{user_id}</code>"
+            "💳 Karta: <code>5614 6805 1876 1602</code>\n"
+            "📱 Admin: @muhammad_amin07\n"
+            f"🆔 Sizning ID: <code>{user_id}</code>"
         )
         await m.answer(tariff_text)
         return
 
     category_name = user_category[user_id]
 
+    # Prezentatsiya
     if category_name == "📊 Prezentatsiya":
-        msg = await m.answer("⏳ 25 ta slayddan iborat professional prezentatsiya tayyorlanyapti (1-2 daqiqa)...")
+        msg = await m.answer("⏳ 25 ta slayd tayyorlanyapti (1-2 daqiqa)...")
         try:
             file = await create_presentation(m.text, user_id)
-            await m.answer_document(FSInputFile(file), caption=f"📁 Mavzu: {m.text}\n✅ 25 ta slayd tayyor!")
+            await m.answer_document(
+                FSInputFile(file), 
+                caption=f"📁 Mavzu: {m.text}\n✅ 25 ta slayd tayyor!"
+            )
             os.remove(file)
         except Exception as e:
-            await m.answer(f"Xatolik: {e}")
-        await msg.delete()
+            await m.answer(f"❌ Xatolik: {e}")
+        finally:
+            try:
+                await msg.delete()
+            except Exception:
+                pass
 
+    # Video
     elif category_name == "🎬 Video Generatsiya":
-        msg = await m.answer("⏳ Google Veo videoni hisoblamoqda va tabiiy ovoz qo'shmoqda...")
+        msg = await m.answer("⏳ Video hisoblanmoqda va ovoz qo'shmoqda...")
         try:
             file, error = await generate_video(m.text)
             if file:
-                await m.answer_video(FSInputFile(file), caption=f"🎬 G'oya: {m.text}\n🔥 Google Veo Studio")
+                await m.answer_video(
+                    FSInputFile(file), 
+                    caption=f"🎬 G'oya: {m.text}\n🔥 Google Veo Studio"
+                )
                 os.remove(file)
             else:
-                await m.answer(f"Xatolik: {error}")
+                await m.answer(f"❌ Xatolik: {error}")
         except Exception as e:
-            await m.answer(f"Xatolik: {e}")
-        await msg.delete()
+            await m.answer(f"❌ Xatolik: {e}")
+        finally:
+            try:
+                await msg.delete()
+            except Exception:
+                pass
 
+    # Audio
     elif category_name == "🎵 Audio/Musiqa":
-        msg = await m.answer("⏳ Google Lyria 3 professional musiqiy trek bastalamoqda...")
+        msg = await m.answer("⏳ Musiqa bastalanmoqda...")
         try:
             file, error = await generate_audio(m.text)
             if file:
-                await m.answer_audio(FSInputFile(file), caption=f"🎵 Uslub: {m.text}\n⚡ Google Lyria 3")
+                await m.answer_audio(
+                    FSInputFile(file), 
+                    caption=f"🎵 Uslub: {m.text}\n⚡ Google Lyria 3"
+                )
                 os.remove(file)
             else:
-                await m.answer(f"Xatolik: {error}")
+                await m.answer(f"❌ Xatolik: {error}")
         except Exception as e:
-            await m.answer(f"Xatolik: {e}")
-        await msg.delete()
+            await m.answer(f"❌ Xatolik: {e}")
+        finally:
+            try:
+                await msg.delete()
+            except Exception:
+                pass
 
+    # Rasm generatsiya
     else:
         msg = await m.answer("⏳ Rasm chizilyapti...")
         try:
@@ -277,15 +339,25 @@ async def generate(m: Message):
                 await m.answer_photo(FSInputFile(file))
                 os.remove(file)
             else:
-                await m.answer(f"Xatolik: {error}")
+                await m.answer(f"❌ Xatolik: {error}")
         except Exception as e:
-            await m.answer(f"Xatolik: {e}")
-        await msg.delete()
+            await m.answer(f"❌ Xatolik: {e}")
+        finally:
+            try:
+                await msg.delete()
+            except Exception:
+                pass
 
-# --- SERVERNI ISHGA TUSHIRISH ---
+# --- SERVER ---
 def main():
     init_db()
+    
+    if not BOT_TOKEN:
+        print("❌ BOT_TOKEN aniqlanmagan!")
+        return
+    
     app = web.Application()
+    
     webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
@@ -294,6 +366,7 @@ def main():
     setup_application(app, dp, bot=bot)
     
     port = int(os.environ.get("PORT", 8000))
+    print(f"🚀 Bot ishga tushdi. Port: {port}")
     web.run_app(app, host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
