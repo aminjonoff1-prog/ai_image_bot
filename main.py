@@ -254,7 +254,7 @@ async def generate(m: Message):
         return
 
     # Limit tekshirish
-    if not check_limit(user_id, FREE_LIMIT):
+    if user_id != ADMIN_ID and not check_limit(user_id, FREE_LIMIT):
         tariff_text = (
             "❌ <b>Bepul limitlaringiz tugadi!</b>\n\n"
             "💰 Tariflar:\n"
