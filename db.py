@@ -1,184 +1,275 @@
 import sqlite3
-import os
 from datetime import datetime
 
-# config.py dan DB_NAME import qilish xavfsizroq
 try:
     from config import DB_NAME
 except ImportError:
     DB_NAME = "users.db"
 
+
+def get_conn():
+    conn = sqlite3.connect(DB_NAME, timeout=30)
+    conn.execute("PRAGMA busy_timeout = 30000")
+    return conn
+
+
 def init_db():
-    # Baza faylini yaratish va jadvalni shakllantirish
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_conn()
     cursor = conn.cursor()
-    
-    # Baza jadvalining asosiy strukturasini yaratish (IF NOT EXISTS)
-    # TOZALANDI: SQL triple quotes orasidagi Python (#) kommentariyalari olib tashlandi
-    cursor.execute('''
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
             username TEXT,
             full_name TEXT,
             usage_count INTEGER DEFAULT 0,
+            premium_limit INTEGER DEFAULT 0,
             joined_date TEXT
         )
-    ''')
+    """)
 
-    # Tranzaksiyani saqlash
     conn.commit()
 
-    # --- RENDER BAZASINI AVTOMAT YANGILASH (MIGRATSIYA) ---
     try:
-        # Jadval ustunlari ro'yxatini olamiz
         cursor.execute("PRAGMA table_info(users)")
         columns = [column[1] for column in cursor.fetchall()]
-        
-        # O'zgarishlarni kiritish uchun tranzaksiyani boshlaymiz
-        conn.commit()
-        
-        # Agar 'full_name' ustuni jadvalda mavjud bo'lmasa, uni qo'shamiz
-        if 'full_name' not in columns:
-            print("INFO: 'full_name' ustuni topilmadi, bazaga qo'shish boshlanmoqda...")
-            cursor.execute("ALTER TABLE users ADD COLUMN full_name TEXT")
-            conn.commit() # Save alterations immediately
-            print("INFO: 'full_name' ustuni bazaga qo'shildi.")
-        
-        # Boshqa ustunlarni ham tekshirish
-        if 'username' not in columns:
+
+        if "username" not in columns:
             cursor.execute("ALTER TABLE users ADD COLUMN username TEXT")
-            conn.commit()
 
-        if 'usage_count' not in columns:
+        if "full_name" not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN full_name TEXT")
+
+        if "usage_count" not in columns:
             cursor.execute("ALTER TABLE users ADD COLUMN usage_count INTEGER DEFAULT 0")
-            conn.commit()
 
-        if 'joined_date' not in columns:
+        if "premium_limit" not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN premium_limit INTEGER DEFAULT 0")
+
+        if "joined_date" not in columns:
             cursor.execute("ALTER TABLE users ADD COLUMN joined_date TEXT")
-            conn.commit()
 
-    except sqlite3.OperationalError as e:
-        # Baza qulflangan yoki boshqa muammo bo'lsa
-        print(f"DIQQAT: Baza ustunlarini tekshirishda xatolik: {e}")
+        conn.commit()
+
+        # Eski tizimda usage_count manfiy bo'lib qolgan bo'lsa,
+        # uni premium_limitga o'tkazamiz
+        cursor.execute("""
+            UPDATE users
+            SET premium_limit = COALESCE(premium_limit, 0) + ABS(usage_count),
+                usage_count = 0
+            WHERE usage_count < 0
+        """)
+
+        conn.commit()
+
     except Exception as e:
-        print(f"XATO: Kutilmagan xatolik: {e}")
+        print(f"❌ DB migratsiya xatosi: {e}")
 
-    # Yakuniy yopish
     conn.close()
-    print("Baza init tugadi.")
+    print("✅ Baza init tugadi.")
+
 
 def add_user(user_id, username, full_name):
-    # Yangi foydalanuvchini bazaga qo'shish
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_conn()
     cursor = conn.cursor()
-    
-    # Avval bu odam bazada bor-yo'qligini tekshiramiz
-    cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
-    if not cursor.fetchone():
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        # Agar username yo'q bo'lsa, "Mavjud emas" deb yozamiz
-        safe_username = username if username else "Mavjud emas"
-        safe_fullname = full_name if full_name else "Foydalanuvchi"
-        
-        # Xatolikni tutib olish uchun try-except ishlatamiz
-        try:
-            cursor.execute(
-                "INSERT INTO users (user_id, username, full_name, usage_count, joined_date) VALUES (?, ?, ?, ?, ?)",
-                (user_id, safe_username, safe_fullname, 0, now)
-            )
-            conn.commit()
-            print(f"✅ Foydalanuvchi qo'shildi: {user_id}")
-        except sqlite3.OperationalError as e:
-            print(f"❌ XATO: Foydalanuvchini qo'shishda xatolik yuz berdi. Baza yangilanmagan ko'rinadi: {e}")
-        except Exception as e:
-            print(f"❌ XATO: Kutilmagan xatolik yuz berdi: {e}")
-            
+
+    safe_username = username if username else "Mavjud emas"
+    safe_fullname = full_name if full_name else "Foydalanuvchi"
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    try:
+        cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+        result = cursor.fetchone()
+
+        if result:
+            cursor.execute("""
+                UPDATE users
+                SET username = ?, full_name = ?
+                WHERE user_id = ?
+            """, (safe_username, safe_fullname, user_id))
+        else:
+            cursor.execute("""
+                INSERT INTO users (
+                    user_id, username, full_name, usage_count, premium_limit, joined_date
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (user_id, safe_username, safe_fullname, 0, 0, now))
+
+        conn.commit()
+
+    except Exception as e:
+        print(f"❌ Foydalanuvchi qo'shishda xatolik: {e}")
+
     conn.close()
 
+
 def check_limit(user_id, free_limit):
-    # Foydalanuvchining limitini tekshirish va bittaga oshirish
-    conn = sqlite3.connect(DB_NAME)
+    """
+    Limit tekshiradi.
+
+    Umumiy limit = FREE_LIMIT + premium_limit
+
+    Masalan:
+    FREE_LIMIT = 5
+    premium_limit = 30
+    user jami 35 marta ishlata oladi.
+    """
+
+    conn = get_conn()
     cursor = conn.cursor()
-    
+
     try:
-        cursor.execute("SELECT usage_count FROM users WHERE user_id = ?", (user_id,))
+        cursor.execute("""
+            SELECT usage_count, COALESCE(premium_limit, 0)
+            FROM users
+            WHERE user_id = ?
+        """, (user_id,))
+
         result = cursor.fetchone()
-        
-        if result:
-            count = result[0]
-            if count < free_limit:
-                # Agar limitdan o'tmagan bo'lsa, hisobni 1 taga oshiramiz va True qaytaramiz
-                cursor.execute("UPDATE users SET usage_count = usage_count + 1 WHERE user_id = ?", (user_id,))
-                conn.commit()
-                conn.close()
-                return True
-            else:
-                # Limit tugagan bo'lsa
-                conn.close()
-                return False
-        else:
-            # Baza xatosi yoki botni start bosmasdan ishlatmoqchi bo'lsa
+
+        if not result:
             conn.close()
             return False
-    except sqlite3.OperationalError as e:
-        print(f"❌ XATO: Limitni tekshirishda xatolik (baza muammosi): {e}")
+
+        usage_count, premium_limit = result
+
+        total_limit = int(free_limit) + int(premium_limit)
+
+        if usage_count < total_limit:
+            cursor.execute("""
+                UPDATE users
+                SET usage_count = usage_count + 1
+                WHERE user_id = ?
+            """, (user_id,))
+            conn.commit()
+            conn.close()
+            return True
+
         conn.close()
         return False
 
-# --- ADMIN PANEL UCHUN QO'SHIMCHA FUNKSIYALAR ---
+    except Exception as e:
+        print(f"❌ Limit tekshirishda xatolik: {e}")
+        conn.close()
+        return False
+
+
+def add_premium_limit(user_id, amount):
+    """
+    Admin foydalanuvchiga pullik limit qo'shadi.
+
+    Misol:
+    /give 123456789 30
+
+    premium_limit = premium_limit + 30
+    """
+
+    if amount <= 0:
+        return False
+
+    conn = get_conn()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+        result = cursor.fetchone()
+
+        if not result:
+            conn.close()
+            return False
+
+        cursor.execute("""
+            UPDATE users
+            SET premium_limit = COALESCE(premium_limit, 0) + ?
+            WHERE user_id = ?
+        """, (amount, user_id))
+
+        conn.commit()
+        conn.close()
+        return True
+
+    except Exception as e:
+        print(f"❌ Premium limit qo'shishda xatolik: {e}")
+        conn.close()
+        return False
+
 
 def get_stats():
-    # Jami foydalanuvchilar va jami ishlatilgan limitlarni hisoblash
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_conn()
     cursor = conn.cursor()
-    
+
     try:
-        cursor.execute("SELECT COUNT(user_id), SUM(usage_count) FROM users")
+        cursor.execute("""
+            SELECT 
+                COUNT(user_id),
+                COALESCE(SUM(usage_count), 0)
+            FROM users
+        """)
+
         result = cursor.fetchone()
         conn.close()
-        # Agar baza bo'sh bo'lsa None qaytmasligi uchun 0 yozamiz
+
         return result[0] or 0, result[1] or 0
+
     except Exception as e:
-        print(f"❌ XATO: Statistikani olishda xatolik: {e}")
+        print(f"❌ Statistikani olishda xatolik: {e}")
         conn.close()
         return 0, 0
 
+
 def get_all_users():
-    # Xabar tarqatish uchun barcha ID larni olish
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_conn()
     cursor = conn.cursor()
-    
+
     try:
         cursor.execute("SELECT user_id FROM users")
         users = cursor.fetchall()
         conn.close()
-        # Faqat ID lardan iborat toza ro'yxat qaytarish
+
         return [user[0] for user in users]
+
     except Exception as e:
-        print(f"❌ XATO: Foydalanuvchilarni olishda xatolik: {e}")
+        print(f"❌ Foydalanuvchilarni olishda xatolik: {e}")
         conn.close()
         return []
 
-def add_premium_limit(user_id, amount):
-    # Foydalanuvchiga admin tomonidan limit qo'shish
-    conn = sqlite3.connect(DB_NAME)
+
+def get_limit_info(user_id, free_limit):
+    """
+    Foydalanuvchining limit ma'lumotlarini qaytaradi.
+    Bu funksiya majburiy emas, lekin /limit komandasi uchun foydali.
+    """
+
+    conn = get_conn()
     cursor = conn.cursor()
-    
+
     try:
-        # Avval foydalanuvchi bazada borligini tekshiramiz
-        cursor.execute("SELECT usage_count FROM users WHERE user_id = ?", (user_id,))
+        cursor.execute("""
+            SELECT usage_count, COALESCE(premium_limit, 0)
+            FROM users
+            WHERE user_id = ?
+        """, (user_id,))
+
         result = cursor.fetchone()
-        
-        if result:
-            # Hozirgi ishlatgan hisobini kamaytiramiz (yoki limitini ko'paytiramiz)
-            # Bizning tizimda usage_count < FREE_LIMIT ishlagani uchun, count ni minus qilsak limit ko'payadi
-            cursor.execute("UPDATE users SET usage_count = usage_count - ? WHERE user_id = ?", (amount, user_id))
-            conn.commit()
+
+        if not result:
             conn.close()
-            return True
+            return None
+
+        usage_count, premium_limit = result
+        total_limit = int(free_limit) + int(premium_limit)
+        remaining = max(0, total_limit - usage_count)
+
         conn.close()
-        return False
-    except sqlite3.OperationalError as e:
-        print(f"❌ XATO: Premium limit berishda xatolik: {e}")
+
+        return {
+            "usage_count": usage_count,
+            "premium_limit": premium_limit,
+            "total_limit": total_limit,
+            "remaining": remaining
+        }
+
+    except Exception as e:
+        print(f"❌ Limit info olishda xatolik: {e}")
         conn.close()
-        return False
+        return None
