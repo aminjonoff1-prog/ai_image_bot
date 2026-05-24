@@ -15,6 +15,7 @@ from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
 from pptx.dml.color import RGBColor
 from presentation_engine import create_professional_presentation
+from coursework_gen import generate_coursework
 
 import google.generativeai as genai
 
