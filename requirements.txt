@@ -3,7 +3,7 @@ aiohttp
 python-pptx
 python-dotenv
 httpx
-google-generativeai
+google-generativeai>=0.8.0
 deep-translator
 Pillow
 matplotlib
