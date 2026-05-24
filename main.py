@@ -571,7 +571,7 @@ async def generate_handler(m: Message):
         msg = await m.answer("⏳ 25 ta slayd tayyorlanyapti (1-2 daqiqa)...")
         file = None
         try:
-            file = await create_presentation(user_text, user_id)
+            file = await create_professional_presentation(user_text, user_id)
             await m.answer_document(
                 FSInputFile(file),
                 caption=f"📁 <b>Mavzu:</b> {user_text}\n✅ 25 ta slayd tayyor!"
