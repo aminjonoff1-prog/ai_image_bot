@@ -12,7 +12,7 @@ gemini_model = None
 if GEMINI_API_KEY:
     try:
         genai.configure(api_key=GEMINI_API_KEY.strip())
-        gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+        gemini_model = genai.GenerativeModel("gemini-1.5-flash-latest")
     except Exception as e:
         print(f"Gemini sozlash xatosi: {e}")
 
