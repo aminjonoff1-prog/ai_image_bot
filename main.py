@@ -702,6 +702,8 @@ async def main():
         logger.error("❌ BOT_TOKEN xatoligi: config.py yoki o'zgaruvchilarni tekshiring!")
         return
 
+    await bot.delete_webhook(drop_pending_updates=True)
+
     await bot.set_my_commands([
         BotCommand(command="start", description="🚀 Boshlash"),
         BotCommand(command="limit", description="📊 Limitni tekshirish"),
