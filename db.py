@@ -273,3 +273,59 @@ def get_limit_info(user_id, free_limit):
         print(f"❌ Limit info olishda xatolik: {e}")
         conn.close()
         return None
+def reset_user_usage(user_id):
+    """Foydalanuvchining ishlatgan limitini 0 ga tushiradi"""
+    conn = get_conn()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+        result = cursor.fetchone()
+        
+        if not result:
+            conn.close()
+            return False
+        
+        cursor.execute("UPDATE users SET usage_count = 0 WHERE user_id = ?", (user_id,))
+        conn.commit()
+        conn.close()
+        return True
+        
+    except Exception as e:
+        print(f"❌ Reset xatosi: {e}")
+        conn.close()
+        return False
+
+
+def get_user_info(user_id):
+    """Foydalanuvchi haqida to'liq ma'lumot"""
+    conn = get_conn()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            SELECT user_id, username, full_name, usage_count, 
+                   COALESCE(premium_limit, 0), joined_date
+            FROM users
+            WHERE user_id = ?
+        """, (user_id,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if not result:
+            return None
+        
+        return {
+            "user_id": result[0],
+            "username": result[1],
+            "full_name": result[2],
+            "usage_count": result[3],
+            "premium_limit": result[4],
+            "joined_date": result[5]
+        }
+        
+    except Exception as e:
+        print(f"❌ User info xatosi: {e}")
+        conn.close()
+        return None
