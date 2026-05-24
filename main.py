@@ -39,6 +39,7 @@ from db import (
     get_limit_info,
     reset_user_usage,
     get_user_info,
+    # Eslatma: Agar increment_usage funksiyangiz bo'lsa, shuni ham import qiling
 )
 
 # --- MODULLAR ---
@@ -82,9 +83,8 @@ dp = Dispatcher()
 # --- FOYDALANUVCHI HOLATLARI ---
 user_category = {}
 
-
 # ============================================================
-# YORDAMCHI FUNKSIYALAR
+# YORDAMCHI FUNKSIYALAR (Helper Functions)
 # ============================================================
 
 def is_admin(user_id: int) -> bool:
@@ -106,10 +106,24 @@ async def safe_remove_file(filename: str):
         logger.error(f"Faylni o'chirishda xato: {e}")
 
 
-def set_slide_background(slide, color):
+# --- DIZAYN FUNKSIYALARI (Yangilangan) ---
+
+def set_slide_background(slide, color1, color2=None):
+    """
+    Slaydga qattiq rang yoki gradient (ranglar aralashmasi) beradi.
+    """
     fill = slide.background.fill
-    fill.solid()
-    fill.fore_color.rgb = color
+    if color2:
+        # Gradient rejim
+        fill.gradient()
+        fill.gradient_angle = 90
+        # Gradient to'xtash nuqtalari (stops)
+        fill.gradient_stops[0].color.rgb = color1
+        fill.gradient_stops[1].color.rgb = color2
+    else:
+        # Oddiy qattiq rang
+        fill.solid()
+        fill.fore_color.rgb = color1
 
 
 def add_title(slide, title_text, subtitle_text="", dark=True):
@@ -222,18 +236,17 @@ def add_kpi_cards(slide, items, left=0.75, top=1.75):
         p2.font.color.rgb = RGBColor(50, 60, 75)
         p2.space_before = Pt(6)
 
+# ============================================================
+# AI VA LOGIKA
+# ============================================================
 
 async def gemini_generate_text(prompt: str) -> str:
-    """
-    Gemini dan matn olish uchun xavfsiz helper.
-    Bir model ishlamasa, boshqasiga o'tadi.
-    """
+    """Gemini dan matn olish uchun xavfsiz helper."""
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY topilmadi")
 
-    model_names = MODEL_NAMES[:]  # nusxa
+    model_names = MODEL_NAMES[:]
 
-    # primary model birinchi bo‘lib sinab ko‘riladi
     if primary_gemini_model:
         try:
             response = await asyncio.to_thread(primary_gemini_model.generate_content, prompt)
@@ -259,9 +272,7 @@ async def gemini_generate_text(prompt: str) -> str:
 
 
 async def get_ai_slide_content(topic, slide_num):
-    """
-    Har bir slayd uchun strukturalangan kontent qaytaradi.
-    """
+    """Har bir slayd uchun strukturalangan kontent qaytaradi."""
     if slide_num <= 5:
         stage = "Kirish va dolzarblik"
     elif slide_num <= 12:
@@ -359,45 +370,65 @@ QOIDALAR:
 
 async def add_image_to_right_panel(slide, topic, slide_num):
     """
-    O‘ng panelga rasm qo‘shishga urinadi.
+    O‘ng panelga rasm yoki placeholder qo‘shadi.
     """
     prompt = (
-        f"{topic}, professional corporate presentation illustration, "
-        f"clean composition, no text, no watermark, premium business style, "
-        f"high detail, realistic, 16:9"
+        f"{topic}, professional corporate minimalist illustration, "
+        f"flat design, vector art, white background, high quality, 16:9"
     )
 
+    img_added = False
+    
+    # Rasm yaratishga urinish
     try:
         img_file, error = await generate_image(prompt, "🖼 Realistik")
         if img_file and os.path.exists(img_file):
+            # Rasmni joylashtirish
             slide.shapes.add_picture(
                 img_file,
-                Inches(6.22), Inches(1.85),
-                width=Inches(2.95),
-                height=Inches(2.15)
+                Inches(5.9), Inches(1.6),
+                width=Inches(3.8),
+                height=Inches(4.0)
             )
-
-            cap = slide.shapes.add_textbox(Inches(6.25), Inches(4.1), Inches(2.9), Inches(1.1))
-            tf = cap.text_frame
-            p = tf.paragraphs[0]
-            p.text = f"Vizual kontent | Slayd {slide_num}"
-            p.font.name = "Calibri"
-            p.font.size = Pt(10)
-            p.font.bold = True
-            p.font.color.rgb = RGBColor(0, 102, 204)
-
-            return img_file
-
-        logger.info(f"Rasm yaratilmadi: {error}")
-        return None
-
+            img_added = True
+            await safe_remove_file(img_file)
+        else:
+            logger.info(f"Rasm API'dan kelmadi: {error}")
     except Exception as e:
-        logger.error(f"Prezentatsiya uchun rasm qo'shishda xato: {e}")
-        return None
+        logger.error(f"Rasm qo'shish xatosi: {e}")
+
+    # AGAR RASM KELMASA, UNI O'RNIGA PREMIUM "PLACEHOLDER" QO'YAMIZ
+    if not img_added:
+        # Shaffof fonli romb/shakl
+        placeholder = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE, 
+            Inches(6.0), Inches(1.6), 
+            Inches(3.6), Inches(4.0)
+        )
+        placeholder.fill.solid()
+        placeholder.fill.fore_color.rgb = RGBColor(240, 244, 248) # Juda och ko'k
+        placeholder.line.color.rgb = RGBColor(0, 102, 204)
+        placeholder.line.width = Pt(2)
+
+        # Placeholder ichiga matn (katta ikonka kabi)
+        text_box = slide.shapes.add_textbox(
+            Inches(6.2), Inches(3.0), 
+            Inches(3.2), Inches(1.2)
+        )
+        tf = text_box.text_frame
+        tf.word_wrap = True
+        p = tf.paragraphs[0]
+        p.text = f"🖼️ VISUAL CONCEPT\n{topic[:20]}..."
+        p.font.size = Pt(16)
+        p.font.bold = True
+        p.font.color.rgb = RGBColor(100, 100, 100)
+        p.alignment = PP_ALIGN.CENTER
+
+    return img_added
 
 
 # ============================================================
-# PREZENTATSIYA YARATISH
+# PREZENTATSIYA YARATISH (YANGILANGAN MURAKKAB DIZAYN)
 # ============================================================
 
 async def create_presentation(topic: str, user_id: int) -> str:
@@ -407,18 +438,19 @@ async def create_presentation(topic: str, user_id: int) -> str:
 
     blank = prs.slide_layouts[6]
 
+    # Ranglar
     dark_navy = RGBColor(11, 29, 58)
-    light_bg = RGBColor(245, 247, 250)
+    light_blue = RGBColor(235, 242, 250)
     white = RGBColor(255, 255, 255)
     accent_blue = RGBColor(0, 102, 204)
-    text_dark = RGBColor(40, 50, 65)
     gold = RGBColor(212, 175, 55)
+    text_dark = RGBColor(40, 50, 65)
 
-    # 1. COVER SLIDE
+    # 1. COVER SLIDE (Gradient fon)
     slide = prs.slides.add_slide(blank)
-    set_slide_background(slide, dark_navy)
+    set_slide_background(slide, dark_navy, RGBColor(40, 60, 90)) # Gradient qo'shildi
 
-    # decorative bar
+    # dekorativ bar
     bar = slide.shapes.add_shape(
         MSO_SHAPE.RECTANGLE,
         Inches(0), Inches(6.65),
@@ -459,7 +491,7 @@ async def create_presentation(topic: str, user_id: int) -> str:
     badge_text = slide.shapes.add_textbox(Inches(2.2), Inches(5.03), Inches(5.6), Inches(0.3))
     tfb = badge_text.text_frame
     pb = tfb.paragraphs[0]
-    pb.text = "25 ta premium slayd | McKinsey uslubidagi dizayn"
+    pb.text = "25 ta premium slayd | AI Generated Design"
     pb.font.name = "Calibri"
     pb.font.size = Pt(12)
     pb.font.bold = True
@@ -468,7 +500,7 @@ async def create_presentation(topic: str, user_id: int) -> str:
 
     # 2. AGENDA SLIDE
     slide = prs.slides.add_slide(blank)
-    set_slide_background(slide, light_bg)
+    set_slide_background(slide, white, light_blue) # Oq va och ko'k gradient
     add_title(slide, "Mundarija", "Prezentatsiyaning asosiy bo'limlari")
     add_bullets_block(
         slide,
@@ -495,55 +527,21 @@ async def create_presentation(topic: str, user_id: int) -> str:
     )
     add_footer(slide, topic, 2)
 
-    # 3-25 SLAYDLAR
+    # 3-25 SLAYDLAR (Murakkab layoutlar)
     for num in range(3, 26):
         slide = prs.slides.add_slide(blank)
-        set_slide_background(slide, light_bg)
+        
+        # Har 3 slaydda bir fon o'zgarib turadi (Turli xil gradientlar)
+        if num % 3 == 0:
+            set_slide_background(slide, white, RGBColor(245, 245, 255))
+        elif num % 3 == 1:
+            set_slide_background(slide, RGBColor(248, 250, 252), white)
+        else:
+            set_slide_background(slide, white)
 
         s_data = await get_ai_slide_content(topic, num)
 
-        # yuqori chip
-        chip = slide.shapes.add_shape(
-            MSO_SHAPE.ROUNDED_RECTANGLE,
-            Inches(0.55), Inches(0.25),
-            Inches(1.2), Inches(0.36)
-        )
-        chip.fill.solid()
-        chip.fill.fore_color.rgb = dark_navy
-        chip.line.fill.background
-
-        chip_txt = slide.shapes.add_textbox(Inches(0.63), Inches(0.29), Inches(1.0), Inches(0.22))
-        tft = chip_txt.text_frame
-        pp = tft.paragraphs[0]
-        pp.text = f"{num:02}/25"
-        pp.font.name = "Calibri"
-        pp.font.size = Pt(10)
-        pp.font.bold = True
-        pp.font.color.rgb = white
-        pp.alignment = PP_ALIGN.CENTER
-
-        # chap va o'ng panellar
-        left_panel = slide.shapes.add_shape(
-            MSO_SHAPE.ROUNDED_RECTANGLE,
-            Inches(0.45), Inches(0.75),
-            Inches(5.15), Inches(5.95)
-        )
-        left_panel.fill.solid()
-        left_panel.fill.fore_color.rgb = white
-        left_panel.line.color.rgb = RGBColor(230, 230, 230)
-        left_panel.line.width = Pt(1)
-
-        right_panel = slide.shapes.add_shape(
-            MSO_SHAPE.ROUNDED_RECTANGLE,
-            Inches(5.75), Inches(0.75),
-            Inches(3.8), Inches(5.95)
-        )
-        right_panel.fill.solid()
-        right_panel.fill.fore_color.rgb = white
-        right_panel.line.color.rgb = RGBColor(230, 230, 230)
-        right_panel.line.width = Pt(1)
-
-        # sarlavha
+        # Sarlavha
         add_title(
             slide,
             s_data.get("title", f"{num}-slayd"),
@@ -554,88 +552,80 @@ async def create_presentation(topic: str, user_id: int) -> str:
         bullets = s_data.get("bullets", [])
         callout = s_data.get("callout", "Strategik xulosa.")
 
-        # --- LAYOUT 1: oddiy bullet + callout
-        if num % 4 != 0 and num % 3 != 0:
-            add_bullets_block(
-                slide,
-                bullets,
-                left=0.72,
-                top=1.55,
-                width=4.85,
-                height=4.7
-            )
-            add_callout_card(
-                slide,
-                "STRATEGIK XULOSA",
-                callout,
-                left=6.0,
-                top=1.75,
-                width=3.35,
-                height=4.35
-            )
-
-        # --- LAYOUT 2: KPI cardlar + callout
-        elif num % 3 == 0 and num % 4 != 0:
-            add_kpi_cards(
-                slide,
-                bullets if bullets else [topic, topic, topic],
-                left=0.75,
-                top=1.75
-            )
-
-            # pastki qisqa izoh
-            summary_box = slide.shapes.add_textbox(Inches(0.8), Inches(3.55), Inches(4.8), Inches(1.2))
-            tfs = summary_box.text_frame
-            p = tfs.paragraphs[0]
-            p.text = callout[:140]
-            p.font.name = "Georgia"
-            p.font.size = Pt(13)
-            p.font.bold = True
-            p.font.color.rgb = text_dark
-
-            add_callout_card(
-                slide,
-                "TAHLILIY BLOK",
-                "Ushbu slaydda asosiy raqamlar va qisqa tahlil kartalar ko'rinishida berildi.",
-                left=6.0,
-                top=1.75,
-                width=3.35,
-                height=4.35
-            )
-
-        # --- LAYOUT 3: bullet + rasm
-        else:
-            add_bullets_block(
-                slide,
-                bullets,
-                left=0.72,
-                top=1.55,
-                width=4.85,
-                height=4.7
-            )
-
-            img_path = await add_image_to_right_panel(slide, topic, num)
-            if not img_path:
+        # --- LAYOUT 1: Split Screen (Chapda matn, o'ngda rasm/placeholder) ---
+        if num % 2 == 0: 
+            # Chap qism - Matn
+            text_box = slide.shapes.add_textbox(Inches(0.6), Inches(1.6), Inches(5.0), Inches(5.0))
+            tf = text_box.text_frame
+            tf.word_wrap = True
+            for i, b in enumerate(bullets):
+                p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+                p.text = f"• {b}"
+                p.font.name = "Calibri"
+                p.font.size = Pt(16)
+                p.font.color.rgb = RGBColor(50, 50, 50)
+                p.space_after = Pt(12)
+            
+            # O'ng qism - Rasm yoki Placeholder
+            img_added = await add_image_to_right_panel(slide, topic, num)
+            
+            if not img_added:
+                # Agar rasm bo'lmasa, o'ng tomonga katta xulosa qo'yamiz
                 add_callout_card(
-                    slide,
-                    "VIZUAL PANEL",
-                    callout,
-                    left=6.0,
-                    top=1.75,
-                    width=3.35,
-                    height=4.35
+                    slide, 
+                    "ASOSIY XULOSA", 
+                    callout, 
+                    left=5.8, 
+                    top=1.6, 
+                    width=3.6, 
+                    height=4.0
                 )
-            else:
-                # rasm bo‘lsa kichik qo‘shimcha xulosa
-                extra = slide.shapes.add_textbox(Inches(6.1), Inches(4.65), Inches(3.25), Inches(1.0))
-                tfe = extra.text_frame
-                pe = tfe.paragraphs[0]
-                pe.text = callout[:120]
-                pe.font.name = "Calibri"
-                pe.font.size = Pt(10)
-                pe.font.color.rgb = accent_blue
-                pe.font.italic = True
-                await safe_remove_file(img_path)
+
+        # --- LAYOUT 2: Centered Focus (Markaziy dizayn) ---
+        else:
+            # Markazda katta konteyner
+            center_box = slide.shapes.add_shape(
+                MSO_SHAPE.ROUNDED_RECTANGLE, 
+                Inches(0.6), Inches(1.5), 
+                Inches(8.8), Inches(5.0)
+            )
+            center_box.fill.solid()
+            center_box.fill.fore_color.rgb = white # Oq quti
+            center_box.line.color.rgb = accent_blue
+            center_box.line.width = Pt(1)
+            center_box.shadow.inherit = False
+
+            # Ichiga matn
+            inner_tf = center_box.text_frame
+            inner_tf.word_wrap = True
+            inner_tf.margin_top = Inches(0.2)
+            inner_tf.margin_bottom = Inches(0.2)
+            inner_tf.margin_left = Inches(0.2)
+            inner_tf.margin_right = Inches(0.2)
+
+            # Sarlavha ichida
+            p_title = inner_tf.paragraphs[0]
+            p_title.text = "TAHLIL VA STATISTIKA"
+            p_title.font.bold = True
+            p_title.font.size = Pt(18)
+            p_title.font.color.rgb = accent_blue
+            p_title.alignment = PP_ALIGN.CENTER
+
+            # Bulletlar
+            for i, b in enumerate(bullets):
+                p = inner_tf.add_paragraph()
+                p.text = b
+                p.font.size = Pt(16)
+                p.alignment = PP_ALIGN.CENTER
+                p.space_after = Pt(15)
+            
+            # Pastki izoh
+            p_foot = inner_tf.add_paragraph()
+            p_foot.text = f"— {callout} —"
+            p_foot.font.italic = True
+            p_foot.font.size = Pt(14)
+            p_foot.font.color.rgb = RGBColor(100, 100, 100)
+            p_foot.alignment = PP_ALIGN.CENTER
 
         add_footer(slide, topic, num)
 
