@@ -8,7 +8,7 @@ def main_menu():
         [KeyboardButton(text="🌄 Landscape"), KeyboardButton(text="📊 Prezentatsiya")],
         [KeyboardButton(text="🖥 UI/UX Web Dizayn"), KeyboardButton(text="🏢 3D Arxitektura")],
         [KeyboardButton(text="💎 Brending"), KeyboardButton(text="🎮 Konsept Art")],
-        [KeyboardButton(text="🏢 Reklama Banneri")] # Bitta o'zini alohida qatorda qoldiramiz
+        [KeyboardButton(text="🏢 Reklama Banneri"), KeyboardButton(text="📚 Kurs Ishi")]
     ]
     
     # resize_keyboard=True tugmalar ekranning yarmini egallab olmasligi uchun kerak
