@@ -14,7 +14,7 @@ except ImportError:
 # Gemini modelini sozlash
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY.strip())
-    gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+    gemini_model = genai.GenerativeModel("gemini-1.5-flash-latest")
 
 
 async def generate_coursework(topic: str, user_id: int) -> str:
