@@ -23,9 +23,8 @@ if GEMINI_API_KEY:
 def get_working_model():
     model_names = [
         "gemini-2.0-flash",
-        "gemini-2.0-flash-exp",
-        "gemini-1.5-pro",
-        "gemini-pro"
+        "gemini-1.5-flash",
+        "gemini-1.5-pro"
     ]
 
     for model_name in model_names:
