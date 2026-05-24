@@ -102,22 +102,309 @@ async def safe_remove_file(filename: str):
 # GEMINI PROFESSIONAL PRESENTATION PROMPT
 # ============================================================
 
-async def get_ai_slide_content(topic: str, slide_num: int) -> dict:
-    """Slayd uchun professional tahliliy matn yaratadi"""
-    default_data = {
-        "title": f"{slide_num}-Bo'lim: {topic[:25]}",
-        "subtitle": "Tahlil va strategik yondashuv",
-        "bullets": [
-            "Mavzu bo'yicha tahliliy o'rganish ishlari olib borilmoqda.",
-            "Infratuzilma va asosiy o'sish ko'rsatkichlari tahlil qilindi.",
-            "Strategik reja loyihasi ishlab chiqildi."
-        ],
-        "callout": "Raqamli tahlil muvaffaqiyat garovidir."
-    }
+def set_slide_background(slide, color):
+    bg = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(10), Inches(7.5))
+    bg.fill.solid()
+    bg.fill.fore_color.rgb = color
+    bg.line.fill.background()
 
-    if not gemini_model:
-        return default_data
 
+def add_title(slide, title_text, subtitle_text="", dark=True):
+    title_box = slide.shapes.add_textbox(Inches(0.6), Inches(0.4), Inches(8.8), Inches(1.0))
+    tf = title_box.text_frame
+    tf.word_wrap = True
+
+    p1 = tf.paragraphs[0]
+    p1.text = title_text
+    p1.font.name = "Georgia"
+    p1.font.size = Pt(24)
+    p1.font.bold = True
+    p1.font.color.rgb = RGBColor(11, 29, 58) if dark else RGBColor(255, 255, 255)
+
+    if subtitle_text:
+        p2 = tf.add_paragraph()
+        p2.text = subtitle_text
+        p2.font.name = "Calibri"
+        p2.font.size = Pt(12)
+        p2.font.color.rgb = RGBColor(0, 102, 204) if dark else RGBColor(212, 175, 55)
+        p2.space_before = Pt(3)
+
+
+def add_footer(slide, topic, num):
+    footer_box = slide.shapes.add_textbox(Inches(0.6), Inches(6.9), Inches(8.8), Inches(0.3))
+    tf = footer_box.text_frame
+    p = tf.paragraphs[0]
+    p.text = f"Loyiha: {topic[:35]}... | Slayd {num}/25 | Maxfiy"
+    p.font.name = "Calibri"
+    p.font.size = Pt(9)
+    p.font.color.rgb = RGBColor(130, 130, 130)
+
+
+def add_bullets_block(slide, bullets, left=0.7, top=1.6, width=5.1, height=4.5):
+    box = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(width), Inches(height))
+    tf = box.text_frame
+    tf.word_wrap = True
+
+    for i, bullet in enumerate(bullets):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        p.text = f"• {bullet}"
+        p.font.name = "Calibri"
+        p.font.size = Pt(15)
+        p.font.color.rgb = RGBColor(40, 50, 65)
+        p.space_after = Pt(12)
+        p.line_spacing = 1.15
+
+
+def add_callout_card(slide, title, text):
+    card = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE,
+        Inches(6.2), Inches(1.7), Inches(3.1), Inches(4.3)
+    )
+    card.fill.solid()
+    card.fill.fore_color.rgb = RGBColor(255, 255, 255)
+    card.line.color.rgb = RGBColor(0, 102, 204)
+    card.line.width = Pt(1.5)
+
+    box = slide.shapes.add_textbox(Inches(6.35), Inches(1.9), Inches(2.8), Inches(4.0))
+    tf = box.text_frame
+    tf.word_wrap = True
+
+    p1 = tf.paragraphs[0]
+    p1.text = title
+    p1.font.name = "Calibri"
+    p1.font.size = Pt(12)
+    p1.font.bold = True
+    p1.font.color.rgb = RGBColor(0, 102, 204)
+    p1.space_after = Pt(10)
+
+    p2 = tf.add_paragraph()
+    p2.text = text
+    p2.font.name = "Georgia"
+    p2.font.size = Pt(14)
+    p2.font.color.rgb = RGBColor(11, 29, 58)
+    p2.line_spacing = 1.2
+
+
+def add_kpi_cards(slide, items):
+    positions = [
+        (0.7, 2.0),
+        (3.3, 2.0),
+        (5.9, 2.0),
+    ]
+
+    for i, item in enumerate(items[:3]):
+        left, top = positions[i]
+        card = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE,
+            Inches(left), Inches(top), Inches(2.2), Inches(2.0)
+        )
+        card.fill.solid()
+        card.fill.fore_color.rgb = RGBColor(255, 255, 255)
+        card.line.color.rgb = RGBColor(220, 225, 230)
+
+        box = slide.shapes.add_textbox(Inches(left + 0.15), Inches(top + 0.15), Inches(1.9), Inches(1.7))
+        tf = box.text_frame
+        tf.word_wrap = True
+
+        p1 = tf.paragraphs[0]
+        p1.text = f"{i+1}"
+        p1.font.name = "Georgia"
+        p1.font.size = Pt(24)
+        p1.font.bold = True
+        p1.font.color.rgb = RGBColor(0, 102, 204)
+
+        p2 = tf.add_paragraph()
+        p2.text = item[:90]
+        p2.font.name = "Calibri"
+        p2.font.size = Pt(12)
+        p2.font.color.rgb = RGBColor(50, 60, 75)
+        p2.space_before = Pt(8)
+
+
+def add_section_slide(slide, title_text, subtitle_text):
+    set_slide_background(slide, RGBColor(11, 29, 58))
+
+    box = slide.shapes.add_textbox(Inches(0.9), Inches(2.0), Inches(8.0), Inches(2.5))
+    tf = box.text_frame
+    tf.word_wrap = True
+
+    p1 = tf.paragraphs[0]
+    p1.text = title_text
+    p1.font.name = "Georgia"
+    p1.font.size = Pt(30)
+    p1.font.bold = True
+    p1.font.color.rgb = RGBColor(255, 255, 255)
+
+    p2 = tf.add_paragraph()
+    p2.text = subtitle_text
+    p2.font.name = "Calibri"
+    p2.font.size = Pt(15)
+    p2.font.color.rgb = RGBColor(212, 175, 55)
+    p2.space_before = Pt(18)
+    
+async def create_presentation(topic: str, user_id: int) -> str:
+    prs = Presentation()
+    prs.slide_width = Inches(10)
+    prs.slide_height = Inches(7.5)
+
+    blank = prs.slide_layouts[6]
+
+    # Ranglar
+    dark_navy = RGBColor(11, 29, 58)
+    light_bg = RGBColor(245, 247, 250)
+    white = RGBColor(255, 255, 255)
+
+    # 1. COVER SLIDE
+    slide = prs.slides.add_slide(blank)
+    set_slide_background(slide, dark_navy)
+
+    title_box = slide.shapes.add_textbox(Inches(0.9), Inches(2.0), Inches(8.0), Inches(2.2))
+    tf = title_box.text_frame
+    tf.word_wrap = True
+
+    p1 = tf.paragraphs[0]
+    p1.text = topic.upper()
+    p1.font.name = "Georgia"
+    p1.font.size = Pt(34)
+    p1.font.bold = True
+    p1.font.color.rgb = white
+
+    p2 = tf.add_paragraph()
+    p2.text = "STRATEGIK TAHLILIY PREZENTATSIYA\nAI yordamida tayyorlandi"
+    p2.font.name = "Calibri"
+    p2.font.size = Pt(16)
+    p2.font.bold = True
+    p2.font.color.rgb = RGBColor(212, 175, 55)
+    p2.space_before = Pt(18)
+
+    # 2. AGENDA SLIDE
+    slide = prs.slides.add_slide(blank)
+    set_slide_background(slide, light_bg)
+    add_title(slide, "Mundarija", "Prezentatsiyaning asosiy bo'limlari")
+    add_bullets_block(slide, [
+        "Mavzuning dolzarbligi va umumiy tavsifi",
+        "Asosiy tendensiyalar va rivojlanish omillari",
+        "Muammo va imkoniyatlarning tahlili",
+        "Strategik yechimlar va ustuvor yo'nalishlar",
+        "Yakuniy xulosa va tavsiyalar"
+    ], left=0.9, top=1.8, width=7.5, height=4.8)
+    add_footer(slide, topic, 2)
+
+    # 3-25 slaydlar
+    for num in range(3, 26):
+        slide = prs.slides.add_slide(blank)
+
+        # Har 6-slaydda section slide
+        if num in [6, 11, 16, 21]:
+            add_section_slide(
+                slide,
+                f"{num}-BO'LIM",
+                f"{topic} bo'yicha navbatdagi strategik yo'nalish"
+            )
+            add_footer(slide, topic, num)
+            continue
+
+        set_slide_background(slide, light_bg)
+
+        s_data = await get_ai_slide_content(topic, num)
+        title = s_data.get("title", f"{num}-Slayd")
+        subtitle = s_data.get("subtitle", "")
+        bullets = s_data.get("bullets", ["Tahliliy ma'lumot mavjud emas."])
+        callout = s_data.get("callout", "Strategik xulosa.")
+
+        # Layout turlari
+        layout_type = num % 4
+
+        # 1-layout: text + callout
+        if layout_type == 0:
+            add_title(slide, title, subtitle)
+            add_bullets_block(slide, bullets[:4], left=0.7, top=1.6, width=5.0, height=4.8)
+            add_callout_card(slide, "STRATEGIK XULOSA", callout)
+
+        # 2-layout: KPI cards
+        elif layout_type == 1:
+            add_title(slide, title, subtitle)
+            add_kpi_cards(slide, bullets[:3])
+
+            lower_box = slide.shapes.add_textbox(Inches(0.8), Inches(4.6), Inches(8.2), Inches(1.4))
+            tf2 = lower_box.text_frame
+            tf2.word_wrap = True
+            p = tf2.paragraphs[0]
+            p.text = callout
+            p.font.name = "Georgia"
+            p.font.size = Pt(16)
+            p.font.color.rgb = RGBColor(11, 29, 58)
+            p.font.bold = True
+
+        # 3-layout: image + text
+        elif layout_type == 2:
+            add_title(slide, title, subtitle)
+
+            text_box = slide.shapes.add_textbox(Inches(0.7), Inches(1.7), Inches(4.5), Inches(4.5))
+            tf3 = text_box.text_frame
+            tf3.word_wrap = True
+            for i, bullet in enumerate(bullets[:4]):
+                p = tf3.paragraphs[0] if i == 0 else tf3.add_paragraph()
+                p.text = f"• {bullet}"
+                p.font.name = "Calibri"
+                p.font.size = Pt(14)
+                p.font.color.rgb = RGBColor(40, 50, 65)
+                p.space_after = Pt(10)
+
+            img_path = None
+            try:
+                img_path, _ = await generate_image(topic, "🖼 Realistik")
+                if img_path and os.path.exists(img_path):
+                    slide.shapes.add_picture(
+                        img_path,
+                        Inches(5.6),
+                        Inches(1.8),
+                        width=Inches(3.2),
+                        height=Inches(2.8)
+                    )
+
+                    # image tag box
+                    img_cap = slide.shapes.add_textbox(Inches(5.7), Inches(4.8), Inches(3.0), Inches(0.8))
+                    tfi = img_cap.text_frame
+                    pp = tfi.paragraphs[0]
+                    pp.text = callout[:100]
+                    pp.font.name = "Calibri"
+                    pp.font.size = Pt(11)
+                    pp.font.color.rgb = RGBColor(0, 102, 204)
+            except Exception as e:
+                logger.error(f"Presentation image xatosi: {e}")
+            finally:
+                await safe_remove_file(img_path)
+
+        # 4-layout: wide insight layout
+        else:
+            add_title(slide, title, subtitle)
+
+            insight_card = slide.shapes.add_shape(
+                MSO_SHAPE.ROUNDED_RECTANGLE,
+                Inches(0.8), Inches(1.8), Inches(8.3), Inches(1.1)
+            )
+            insight_card.fill.solid()
+            insight_card.fill.fore_color.rgb = RGBColor(255, 255, 255)
+            insight_card.line.color.rgb = RGBColor(0, 102, 204)
+
+            insight_text = slide.shapes.add_textbox(Inches(1.0), Inches(2.05), Inches(7.8), Inches(0.6))
+            tfi = insight_text.text_frame
+            p = tfi.paragraphs[0]
+            p.text = callout
+            p.font.name = "Georgia"
+            p.font.size = Pt(15)
+            p.font.bold = True
+            p.font.color.rgb = RGBColor(11, 29, 58)
+
+            add_bullets_block(slide, bullets[:4], left=1.0, top=3.2, width=7.5, height=2.5)
+
+        add_footer(slide, topic, num)
+
+    file_name = f"prezentatsiya_{user_id}_{int(time.time())}.pptx"
+    prs.save(file_name)
+    return file_name
+    
     prompt = (
         f"Siz dunyodagi eng nufuzli McKinsey va BCG konsalting kompaniyalarining bosh strategisiz.\n"
         f"Mavzu: '{topic}' bo'yicha tayyorlanayotgan professional prezentatsiyaning {slide_num}-slaydi uchun o'zbek tilida matn yozing.\n\n"
