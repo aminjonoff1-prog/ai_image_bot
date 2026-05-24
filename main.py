@@ -480,7 +480,7 @@ async def userinfo_command(m: Message):
 
 CATEGORIES = [
     "🎨 Logo", "🖼 Realistik", "📱 Avatar", "🏠 Interyer",
-    "🌄 Landscape", "📊 Prezentatsiya", "🖥 UI/UX Web Dizayn",
+    "🌄 Landscape", "📊 Prezentatsiya","📚 Kurs Ishi", "🖥 UI/UX Web Dizayn",
     "🏢 3D Arxitektura", "💎 Brending", "🎮 Konsept Art",
     "🏢 Reklama Banneri", "🎬 Video Generatsiya", "🎵 Audio/Musiqa",
 ]
