@@ -7,3 +7,4 @@ google-generativeai
 deep-translator
 Pillow
 matplotlib
+python-docx
