@@ -5,3 +5,5 @@ python-dotenv
 httpx
 google-generativeai
 deep-translator
+Pillow
+matplotlib
