@@ -2,6 +2,7 @@ import os
 import asyncio
 import logging
 import time
+import re
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F
@@ -45,7 +46,7 @@ from keyboards import main_menu
 from image_gen import generate_image
 from video_gen import generate_video
 from audio_gen import generate_audio
-from coursework_gen import generate_coursework  # Yangi kurs ishi moduli
+from coursework_gen import generate_coursework
 
 # --- LOGGING ---
 logging.basicConfig(
@@ -55,14 +56,21 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- GEMINI SOZLAMALARI ---
-gemini_model = None
+MODEL_NAMES = [
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
+]
+
+primary_gemini_model = None
 if GEMINI_API_KEY:
     try:
         genai.configure(api_key=GEMINI_API_KEY.strip())
-        gemini_model = genai.GenerativeModel("gemini-1.5-flash-latest")
+        primary_gemini_model = genai.GenerativeModel(MODEL_NAMES[0])
         logger.info("✅ Gemini muvaffaqiyatli yuklandi")
     except Exception as e:
-        logger.error(f"❌ Gemini init xatosi: {e}")
+        logger.warning(f"⚠️ Gemini init xatosi: {e}")
+        primary_gemini_model = None
 
 # --- BOT VA DISPATCHER ---
 bot = Bot(
@@ -98,19 +106,14 @@ async def safe_remove_file(filename: str):
         logger.error(f"Faylni o'chirishda xato: {e}")
 
 
-# ============================================================
-# GEMINI PROFESSIONAL PRESENTATION PROMPT
-# ============================================================
-
 def set_slide_background(slide, color):
-    bg = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(10), Inches(7.5))
-    bg.fill.solid()
-    bg.fill.fore_color.rgb = color
-    bg.line.fill.background()
+    fill = slide.background.fill
+    fill.solid()
+    fill.fore_color.rgb = color
 
 
 def add_title(slide, title_text, subtitle_text="", dark=True):
-    title_box = slide.shapes.add_textbox(Inches(0.6), Inches(0.4), Inches(8.8), Inches(1.0))
+    title_box = slide.shapes.add_textbox(Inches(0.6), Inches(0.35), Inches(8.8), Inches(1.0))
     tf = title_box.text_frame
     tf.word_wrap = True
 
@@ -131,7 +134,7 @@ def add_title(slide, title_text, subtitle_text="", dark=True):
 
 
 def add_footer(slide, topic, num):
-    footer_box = slide.shapes.add_textbox(Inches(0.6), Inches(6.9), Inches(8.8), Inches(0.3))
+    footer_box = slide.shapes.add_textbox(Inches(0.6), Inches(6.85), Inches(8.8), Inches(0.3))
     tf = footer_box.text_frame
     p = tf.paragraphs[0]
     p.text = f"Loyiha: {topic[:35]}... | Slayd {num}/25 | Maxfiy"
@@ -140,32 +143,32 @@ def add_footer(slide, topic, num):
     p.font.color.rgb = RGBColor(130, 130, 130)
 
 
-def add_bullets_block(slide, bullets, left=0.7, top=1.6, width=5.1, height=4.5):
+def add_bullets_block(slide, bullets, left=0.7, top=1.55, width=5.0, height=4.6):
     box = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(width), Inches(height))
     tf = box.text_frame
     tf.word_wrap = True
 
-    for i, bullet in enumerate(bullets):
+    for i, bullet in enumerate(bullets[:5]):
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
         p.text = f"• {bullet}"
         p.font.name = "Calibri"
-        p.font.size = Pt(15)
+        p.font.size = Pt(14)
         p.font.color.rgb = RGBColor(40, 50, 65)
-        p.space_after = Pt(12)
-        p.line_spacing = 1.15
+        p.space_after = Pt(10)
+        p.line_spacing = 1.12
 
 
-def add_callout_card(slide, title, text):
+def add_callout_card(slide, title, text, left=6.1, top=1.65, width=3.1, height=4.5):
     card = slide.shapes.add_shape(
         MSO_SHAPE.ROUNDED_RECTANGLE,
-        Inches(6.2), Inches(1.7), Inches(3.1), Inches(4.3)
+        Inches(left), Inches(top), Inches(width), Inches(height)
     )
     card.fill.solid()
     card.fill.fore_color.rgb = RGBColor(255, 255, 255)
     card.line.color.rgb = RGBColor(0, 102, 204)
-    card.line.width = Pt(1.5)
+    card.line.width = Pt(1.2)
 
-    box = slide.shapes.add_textbox(Inches(6.35), Inches(1.9), Inches(2.8), Inches(4.0))
+    box = slide.shapes.add_textbox(Inches(left + 0.12), Inches(top + 0.15), Inches(width - 0.24), Inches(height - 0.3))
     tf = box.text_frame
     tf.word_wrap = True
 
@@ -180,68 +183,223 @@ def add_callout_card(slide, title, text):
     p2 = tf.add_paragraph()
     p2.text = text
     p2.font.name = "Georgia"
-    p2.font.size = Pt(14)
+    p2.font.size = Pt(13)
     p2.font.color.rgb = RGBColor(11, 29, 58)
-    p2.line_spacing = 1.2
+    p2.line_spacing = 1.18
 
 
-def add_kpi_cards(slide, items):
-    positions = [
-        (0.7, 2.0),
-        (3.3, 2.0),
-        (5.9, 2.0),
-    ]
+def add_kpi_cards(slide, items, left=0.75, top=1.75):
+    card_w = 1.52
+    card_h = 1.35
+    gap = 0.12
 
     for i, item in enumerate(items[:3]):
-        left, top = positions[i]
+        x = left + i * (card_w + gap)
         card = slide.shapes.add_shape(
             MSO_SHAPE.ROUNDED_RECTANGLE,
-            Inches(left), Inches(top), Inches(2.2), Inches(2.0)
+            Inches(x), Inches(top), Inches(card_w), Inches(card_h)
         )
         card.fill.solid()
         card.fill.fore_color.rgb = RGBColor(255, 255, 255)
         card.line.color.rgb = RGBColor(220, 225, 230)
+        card.line.width = Pt(1)
 
-        box = slide.shapes.add_textbox(Inches(left + 0.15), Inches(top + 0.15), Inches(1.9), Inches(1.7))
+        box = slide.shapes.add_textbox(Inches(x + 0.08), Inches(top + 0.08), Inches(card_w - 0.16), Inches(card_h - 0.16))
         tf = box.text_frame
         tf.word_wrap = True
 
         p1 = tf.paragraphs[0]
-        p1.text = f"{i+1}"
+        p1.text = f"{i + 1}"
         p1.font.name = "Georgia"
-        p1.font.size = Pt(24)
+        p1.font.size = Pt(20)
         p1.font.bold = True
         p1.font.color.rgb = RGBColor(0, 102, 204)
 
         p2 = tf.add_paragraph()
-        p2.text = item[:90]
+        p2.text = item[:55]
         p2.font.name = "Calibri"
-        p2.font.size = Pt(12)
+        p2.font.size = Pt(10)
         p2.font.color.rgb = RGBColor(50, 60, 75)
-        p2.space_before = Pt(8)
+        p2.space_before = Pt(6)
 
 
-def add_section_slide(slide, title_text, subtitle_text):
-    set_slide_background(slide, RGBColor(11, 29, 58))
+async def gemini_generate_text(prompt: str) -> str:
+    """
+    Gemini dan matn olish uchun xavfsiz helper.
+    Bir model ishlamasa, boshqasiga o'tadi.
+    """
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY topilmadi")
 
-    box = slide.shapes.add_textbox(Inches(0.9), Inches(2.0), Inches(8.0), Inches(2.5))
-    tf = box.text_frame
-    tf.word_wrap = True
+    model_names = MODEL_NAMES[:]  # nusxa
 
-    p1 = tf.paragraphs[0]
-    p1.text = title_text
-    p1.font.name = "Georgia"
-    p1.font.size = Pt(30)
-    p1.font.bold = True
-    p1.font.color.rgb = RGBColor(255, 255, 255)
+    # primary model birinchi bo‘lib sinab ko‘riladi
+    if primary_gemini_model:
+        try:
+            response = await asyncio.to_thread(primary_gemini_model.generate_content, prompt)
+            text = (response.text or "").strip()
+            if text:
+                return text
+        except Exception as e:
+            logger.warning(f"Primary Gemini model xatosi: {e}")
 
-    p2 = tf.add_paragraph()
-    p2.text = subtitle_text
-    p2.font.name = "Calibri"
-    p2.font.size = Pt(15)
-    p2.font.color.rgb = RGBColor(212, 175, 55)
-    p2.space_before = Pt(18)
-    
+    last_error = None
+    for model_name in model_names:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = await asyncio.to_thread(model.generate_content, prompt)
+            text = (response.text or "").strip()
+            if text:
+                return text
+        except Exception as e:
+            last_error = e
+            logger.warning(f"Gemini model xatosi ({model_name}): {e}")
+
+    raise last_error if last_error else RuntimeError("Gemini javobi olinmadi")
+
+
+async def get_ai_slide_content(topic, slide_num):
+    """
+    Har bir slayd uchun strukturalangan kontent qaytaradi.
+    """
+    if slide_num <= 5:
+        stage = "Kirish va dolzarblik"
+    elif slide_num <= 12:
+        stage = "Asosiy tahlil"
+    elif slide_num <= 19:
+        stage = "Strategik yondashuv"
+    else:
+        stage = "Xulosa va tavsiyalar"
+
+    default_data = {
+        "title": f"{stage} | {slide_num}-slayd",
+        "subtitle": f"{topic} bo'yicha tizimli tahlil",
+        "bullets": [
+            f"{topic} mavzusining asosiy jihatlari",
+            "Muammo va imkoniyatlarning tahlili",
+            "Strategik yo'nalishlar",
+            "Amaliy tavsiyalar",
+        ],
+        "callout": "Tahlil natijasida eng muhim strategik xulosa shu slaydda beriladi."
+    }
+
+    if not GEMINI_API_KEY:
+        return default_data
+
+    prompt = f"""
+Siz professional konsalting kompaniya strategisiz va akademik yozuvchisiz.
+
+MAVZU:
+{topic}
+
+SLAYD RAQAMI:
+{slide_num}
+
+SLAYD BOSQICHI:
+{stage}
+
+QAT'IY FORMATDA JAVOB BERING:
+TITLE: [qisqa va kuchli sarlavha]
+SUBTITLE: [kichik strategik sarlavha]
+BULLETS:
+- [1-qisqa tahliliy nuqta]
+- [2-qisqa tahliliy nuqta]
+- [3-qisqa tahliliy nuqta]
+- [4-qisqa tahliliy nuqta]
+CALLOUT: [1 qatorlik eng muhim xulosa]
+
+QOIDALAR:
+- Faqat o'zbek tilida yozing
+- Qisqa, akademik va professional bo'lsin
+- Hech qanday izoh qo'shmang
+- Markdown ishlatmang
+- Bulletlar 4 tadan oshmasin
+"""
+
+    try:
+        text = await gemini_generate_text(prompt)
+        data = {
+            "title": default_data["title"],
+            "subtitle": default_data["subtitle"],
+            "bullets": [],
+            "callout": default_data["callout"],
+        }
+
+        current_section = None
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            upper = line.upper()
+
+            if upper.startswith("TITLE:"):
+                data["title"] = line.split(":", 1)[1].strip()
+            elif upper.startswith("SUBTITLE:"):
+                data["subtitle"] = line.split(":", 1)[1].strip()
+            elif upper.startswith("BULLETS:"):
+                current_section = "bullets"
+            elif upper.startswith("CALLOUT:"):
+                data["callout"] = line.split(":", 1)[1].strip()
+                current_section = None
+            elif current_section == "bullets":
+                clean = re.sub(r"^[-•*\d\.\)\s]+", "", line).strip()
+                if clean:
+                    data["bullets"].append(clean)
+
+        if not data["bullets"]:
+            data["bullets"] = default_data["bullets"]
+
+        return data
+
+    except Exception as e:
+        logger.error(f"Gemini slayd xatosi: {e}")
+        return default_data
+
+
+async def add_image_to_right_panel(slide, topic, slide_num):
+    """
+    O‘ng panelga rasm qo‘shishga urinadi.
+    """
+    prompt = (
+        f"{topic}, professional corporate presentation illustration, "
+        f"clean composition, no text, no watermark, premium business style, "
+        f"high detail, realistic, 16:9"
+    )
+
+    try:
+        img_file, error = await generate_image(prompt, "🖼 Realistik")
+        if img_file and os.path.exists(img_file):
+            slide.shapes.add_picture(
+                img_file,
+                Inches(6.22), Inches(1.85),
+                width=Inches(2.95),
+                height=Inches(2.15)
+            )
+
+            cap = slide.shapes.add_textbox(Inches(6.25), Inches(4.1), Inches(2.9), Inches(1.1))
+            tf = cap.text_frame
+            p = tf.paragraphs[0]
+            p.text = f"Vizual kontent | Slayd {slide_num}"
+            p.font.name = "Calibri"
+            p.font.size = Pt(10)
+            p.font.bold = True
+            p.font.color.rgb = RGBColor(0, 102, 204)
+
+            return img_file
+
+        logger.info(f"Rasm yaratilmadi: {error}")
+        return None
+
+    except Exception as e:
+        logger.error(f"Prezentatsiya uchun rasm qo'shishda xato: {e}")
+        return None
+
+
+# ============================================================
+# PREZENTATSIYA YARATISH
+# ============================================================
+
 async def create_presentation(topic: str, user_id: int) -> str:
     prs = Presentation()
     prs.slide_width = Inches(10)
@@ -249,352 +407,237 @@ async def create_presentation(topic: str, user_id: int) -> str:
 
     blank = prs.slide_layouts[6]
 
-    # Ranglar
     dark_navy = RGBColor(11, 29, 58)
     light_bg = RGBColor(245, 247, 250)
     white = RGBColor(255, 255, 255)
+    accent_blue = RGBColor(0, 102, 204)
+    text_dark = RGBColor(40, 50, 65)
+    gold = RGBColor(212, 175, 55)
 
     # 1. COVER SLIDE
     slide = prs.slides.add_slide(blank)
     set_slide_background(slide, dark_navy)
 
-    title_box = slide.shapes.add_textbox(Inches(0.9), Inches(2.0), Inches(8.0), Inches(2.2))
+    # decorative bar
+    bar = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE,
+        Inches(0), Inches(6.65),
+        Inches(10), Inches(0.85)
+    )
+    bar.fill.solid()
+    bar.fill.fore_color.rgb = accent_blue
+    bar.line.fill.background
+
+    title_box = slide.shapes.add_textbox(Inches(0.8), Inches(2.1), Inches(8.4), Inches(1.7))
     tf = title_box.text_frame
     tf.word_wrap = True
 
     p1 = tf.paragraphs[0]
     p1.text = topic.upper()
     p1.font.name = "Georgia"
-    p1.font.size = Pt(34)
+    p1.font.size = Pt(30)
     p1.font.bold = True
     p1.font.color.rgb = white
 
     p2 = tf.add_paragraph()
     p2.text = "STRATEGIK TAHLILIY PREZENTATSIYA\nAI yordamida tayyorlandi"
     p2.font.name = "Calibri"
-    p2.font.size = Pt(16)
+    p2.font.size = Pt(15)
     p2.font.bold = True
-    p2.font.color.rgb = RGBColor(212, 175, 55)
-    p2.space_before = Pt(18)
+    p2.font.color.rgb = gold
+    p2.space_before = Pt(16)
+
+    badge = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE,
+        Inches(2.1), Inches(4.9),
+        Inches(5.8), Inches(0.55)
+    )
+    badge.fill.solid()
+    badge.fill.fore_color.rgb = white
+    badge.line.fill.background
+
+    badge_text = slide.shapes.add_textbox(Inches(2.2), Inches(5.03), Inches(5.6), Inches(0.3))
+    tfb = badge_text.text_frame
+    pb = tfb.paragraphs[0]
+    pb.text = "25 ta premium slayd | McKinsey uslubidagi dizayn"
+    pb.font.name = "Calibri"
+    pb.font.size = Pt(12)
+    pb.font.bold = True
+    pb.font.color.rgb = dark_navy
+    pb.alignment = PP_ALIGN.CENTER
 
     # 2. AGENDA SLIDE
     slide = prs.slides.add_slide(blank)
     set_slide_background(slide, light_bg)
     add_title(slide, "Mundarija", "Prezentatsiyaning asosiy bo'limlari")
-    add_bullets_block(slide, [
-        "Mavzuning dolzarbligi va umumiy tavsifi",
-        "Asosiy tendensiyalar va rivojlanish omillari",
-        "Muammo va imkoniyatlarning tahlili",
-        "Strategik yechimlar va ustuvor yo'nalishlar",
-        "Yakuniy xulosa va tavsiyalar"
-    ], left=0.9, top=1.8, width=7.5, height=4.8)
+    add_bullets_block(
+        slide,
+        [
+            "Mavzuning dolzarbligi va umumiy tavsifi",
+            "Asosiy tendensiyalar va rivojlanish omillari",
+            "Muammo va imkoniyatlarning tahlili",
+            "Strategik yechimlar va ustuvor yo'nalishlar",
+            "Yakuniy xulosa va tavsiyalar",
+        ],
+        left=0.9,
+        top=1.7,
+        width=5.0,
+        height=4.5
+    )
+    add_callout_card(
+        slide,
+        "PREZENTATSIYA MAQSADI",
+        "Ushbu loyiha mavzuni chuqur tahlil qilib, amaliy va strategik xulosalar berish uchun tayyorlandi.",
+        left=6.15,
+        top=1.7,
+        width=3.05,
+        height=4.5
+    )
     add_footer(slide, topic, 2)
 
-    # 3-25 slaydlar
+    # 3-25 SLAYDLAR
     for num in range(3, 26):
         slide = prs.slides.add_slide(blank)
-
-        # Har 6-slaydda section slide
-        if num in [6, 11, 16, 21]:
-            add_section_slide(
-                slide,
-                f"{num}-BO'LIM",
-                f"{topic} bo'yicha navbatdagi strategik yo'nalish"
-            )
-            add_footer(slide, topic, num)
-            continue
-
         set_slide_background(slide, light_bg)
 
         s_data = await get_ai_slide_content(topic, num)
-        title = s_data.get("title", f"{num}-Slayd")
-        subtitle = s_data.get("subtitle", "")
-        bullets = s_data.get("bullets", ["Tahliliy ma'lumot mavjud emas."])
+
+        # yuqori chip
+        chip = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE,
+            Inches(0.55), Inches(0.25),
+            Inches(1.2), Inches(0.36)
+        )
+        chip.fill.solid()
+        chip.fill.fore_color.rgb = dark_navy
+        chip.line.fill.background
+
+        chip_txt = slide.shapes.add_textbox(Inches(0.63), Inches(0.29), Inches(1.0), Inches(0.22))
+        tft = chip_txt.text_frame
+        pp = tft.paragraphs[0]
+        pp.text = f"{num:02}/25"
+        pp.font.name = "Calibri"
+        pp.font.size = Pt(10)
+        pp.font.bold = True
+        pp.font.color.rgb = white
+        pp.alignment = PP_ALIGN.CENTER
+
+        # chap va o'ng panellar
+        left_panel = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE,
+            Inches(0.45), Inches(0.75),
+            Inches(5.15), Inches(5.95)
+        )
+        left_panel.fill.solid()
+        left_panel.fill.fore_color.rgb = white
+        left_panel.line.color.rgb = RGBColor(230, 230, 230)
+        left_panel.line.width = Pt(1)
+
+        right_panel = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE,
+            Inches(5.75), Inches(0.75),
+            Inches(3.8), Inches(5.95)
+        )
+        right_panel.fill.solid()
+        right_panel.fill.fore_color.rgb = white
+        right_panel.line.color.rgb = RGBColor(230, 230, 230)
+        right_panel.line.width = Pt(1)
+
+        # sarlavha
+        add_title(
+            slide,
+            s_data.get("title", f"{num}-slayd"),
+            s_data.get("subtitle", ""),
+            dark=True
+        )
+
+        bullets = s_data.get("bullets", [])
         callout = s_data.get("callout", "Strategik xulosa.")
 
-        # Layout turlari
-        layout_type = num % 4
+        # --- LAYOUT 1: oddiy bullet + callout
+        if num % 4 != 0 and num % 3 != 0:
+            add_bullets_block(
+                slide,
+                bullets,
+                left=0.72,
+                top=1.55,
+                width=4.85,
+                height=4.7
+            )
+            add_callout_card(
+                slide,
+                "STRATEGIK XULOSA",
+                callout,
+                left=6.0,
+                top=1.75,
+                width=3.35,
+                height=4.35
+            )
 
-        # 1-layout: text + callout
-        if layout_type == 0:
-            add_title(slide, title, subtitle)
-            add_bullets_block(slide, bullets[:4], left=0.7, top=1.6, width=5.0, height=4.8)
-            add_callout_card(slide, "STRATEGIK XULOSA", callout)
+        # --- LAYOUT 2: KPI cardlar + callout
+        elif num % 3 == 0 and num % 4 != 0:
+            add_kpi_cards(
+                slide,
+                bullets if bullets else [topic, topic, topic],
+                left=0.75,
+                top=1.75
+            )
 
-        # 2-layout: KPI cards
-        elif layout_type == 1:
-            add_title(slide, title, subtitle)
-            add_kpi_cards(slide, bullets[:3])
-
-            lower_box = slide.shapes.add_textbox(Inches(0.8), Inches(4.6), Inches(8.2), Inches(1.4))
-            tf2 = lower_box.text_frame
-            tf2.word_wrap = True
-            p = tf2.paragraphs[0]
-            p.text = callout
+            # pastki qisqa izoh
+            summary_box = slide.shapes.add_textbox(Inches(0.8), Inches(3.55), Inches(4.8), Inches(1.2))
+            tfs = summary_box.text_frame
+            p = tfs.paragraphs[0]
+            p.text = callout[:140]
             p.font.name = "Georgia"
-            p.font.size = Pt(16)
-            p.font.color.rgb = RGBColor(11, 29, 58)
+            p.font.size = Pt(13)
             p.font.bold = True
+            p.font.color.rgb = text_dark
 
-        # 3-layout: image + text
-        elif layout_type == 2:
-            add_title(slide, title, subtitle)
+            add_callout_card(
+                slide,
+                "TAHLILIY BLOK",
+                "Ushbu slaydda asosiy raqamlar va qisqa tahlil kartalar ko'rinishida berildi.",
+                left=6.0,
+                top=1.75,
+                width=3.35,
+                height=4.35
+            )
 
-            text_box = slide.shapes.add_textbox(Inches(0.7), Inches(1.7), Inches(4.5), Inches(4.5))
-            tf3 = text_box.text_frame
-            tf3.word_wrap = True
-            for i, bullet in enumerate(bullets[:4]):
-                p = tf3.paragraphs[0] if i == 0 else tf3.add_paragraph()
-                p.text = f"• {bullet}"
-                p.font.name = "Calibri"
-                p.font.size = Pt(14)
-                p.font.color.rgb = RGBColor(40, 50, 65)
-                p.space_after = Pt(10)
+        # --- LAYOUT 3: bullet + rasm
+        else:
+            add_bullets_block(
+                slide,
+                bullets,
+                left=0.72,
+                top=1.55,
+                width=4.85,
+                height=4.7
+            )
 
-            img_path = None
-            try:
-                img_path, _ = await generate_image(topic, "🖼 Realistik")
-                if img_path and os.path.exists(img_path):
-                    slide.shapes.add_picture(
-                        img_path,
-                        Inches(5.6),
-                        Inches(1.8),
-                        width=Inches(3.2),
-                        height=Inches(2.8)
-                    )
-
-                    # image tag box
-                    img_cap = slide.shapes.add_textbox(Inches(5.7), Inches(4.8), Inches(3.0), Inches(0.8))
-                    tfi = img_cap.text_frame
-                    pp = tfi.paragraphs[0]
-                    pp.text = callout[:100]
-                    pp.font.name = "Calibri"
-                    pp.font.size = Pt(11)
-                    pp.font.color.rgb = RGBColor(0, 102, 204)
-            except Exception as e:
-                logger.error(f"Presentation image xatosi: {e}")
-            finally:
+            img_path = await add_image_to_right_panel(slide, topic, num)
+            if not img_path:
+                add_callout_card(
+                    slide,
+                    "VIZUAL PANEL",
+                    callout,
+                    left=6.0,
+                    top=1.75,
+                    width=3.35,
+                    height=4.35
+                )
+            else:
+                # rasm bo‘lsa kichik qo‘shimcha xulosa
+                extra = slide.shapes.add_textbox(Inches(6.1), Inches(4.65), Inches(3.25), Inches(1.0))
+                tfe = extra.text_frame
+                pe = tfe.paragraphs[0]
+                pe.text = callout[:120]
+                pe.font.name = "Calibri"
+                pe.font.size = Pt(10)
+                pe.font.color.rgb = accent_blue
+                pe.font.italic = True
                 await safe_remove_file(img_path)
 
-        # 4-layout: wide insight layout
-        else:
-            add_title(slide, title, subtitle)
-
-            insight_card = slide.shapes.add_shape(
-                MSO_SHAPE.ROUNDED_RECTANGLE,
-                Inches(0.8), Inches(1.8), Inches(8.3), Inches(1.1)
-            )
-            insight_card.fill.solid()
-            insight_card.fill.fore_color.rgb = RGBColor(255, 255, 255)
-            insight_card.line.color.rgb = RGBColor(0, 102, 204)
-
-            insight_text = slide.shapes.add_textbox(Inches(1.0), Inches(2.05), Inches(7.8), Inches(0.6))
-            tfi = insight_text.text_frame
-            p = tfi.paragraphs[0]
-            p.text = callout
-            p.font.name = "Georgia"
-            p.font.size = Pt(15)
-            p.font.bold = True
-            p.font.color.rgb = RGBColor(11, 29, 58)
-
-            add_bullets_block(slide, bullets[:4], left=1.0, top=3.2, width=7.5, height=2.5)
-
         add_footer(slide, topic, num)
-
-    file_name = f"prezentatsiya_{user_id}_{int(time.time())}.pptx"
-    prs.save(file_name)
-    return file_name
-    
-    prompt = (
-        f"Siz dunyodagi eng nufuzli McKinsey va BCG konsalting kompaniyalarining bosh strategisiz.\n"
-        f"Mavzu: '{topic}' bo'yicha tayyorlanayotgan professional prezentatsiyaning {slide_num}-slaydi uchun o'zbek tilida matn yozing.\n\n"
-        f"Format qat'iy ravishda quyidagicha bo'lsin (Hech qanday boshqa so'z yozmang, faqat shu formatda):\n"
-        f"TITLE: [Slaydning qisqa va kuchli sarlavhasi]\n"
-        f"SUBTITLE: [Slaydning kichik strategik sarlavhasi]\n"
-        f"BULLETS:\n"
-        f"- [Asosiy tahliliy fakt yoki drayver, juda professional tilda]\n"
-        f"- [Ikkinchi tahliliy fakt, raqamlar yoki statistika bilan boyitilgan]\n"
-        f"- [Uchinchi muhim yo'nalish yoki strategik chora-tadbir]\n"
-        f"- [To'rtinchi muhim xulosa yoki xalqaro tajriba]\n"
-        f"CALLOUT: [Ushbu slayddan olinadigan eng muhim konsalting xulosasi yoki oltin qoida - 1 qator]"
-    )
-
-    try:
-        response = await asyncio.to_thread(gemini_model.generate_content, prompt)
-        text = response.text.strip()
-        
-        # AI javobini tahlil qilish (parsing)
-        lines = text.split("\n")
-        data = {
-            "title": f"Mavzu: {topic[:30]}",
-            "subtitle": "",
-            "bullets": [],
-            "callout": ""
-        }
-        
-        current_section = None
-        for line in lines:
-            line_str = line.strip()
-            if not line_str:
-                continue
-            
-            if line_str.upper().startswith("TITLE:"):
-                data["title"] = line_str[6:].strip().replace("[", "").replace("]", "")
-            elif line_str.upper().startswith("SUBTITLE:"):
-                data["subtitle"] = line_str[9:].strip().replace("[", "").replace("]", "")
-            elif line_str.upper().startswith("BULLETS:"):
-                current_section = "bullets"
-            elif line_str.upper().startswith("CALLOUT:"):
-                data["callout"] = line_str[8:].strip().replace("[", "").replace("]", "")
-                current_section = None
-            elif current_section == "bullets" and (line_str.startswith("-") or line_str.startswith("•") or line_str.startswith("*")):
-                bullet_text = line_str[1:].strip().replace("[", "").replace("]", "")
-                if bullet_text:
-                    data["bullets"].append(bullet_text)
-
-        if not data["bullets"]:
-            data["bullets"] = default_data["bullets"]
-        if not data["callout"]:
-            data["callout"] = default_data["callout"]
-
-        return data
-    except Exception as e:
-        logger.error(f"Gemini slayd xatosi: {e}")
-        return default_data
-
-
-# ============================================================
-# MCKINSEY STYLE SLIDE BUILDER (PROFESSIONAL DESIGN)
-# ============================================================
-
-async def create_presentation(topic: str, user_id: int) -> str:
-    """Dizaynerlik darajasidagi, 25 slayddan iborat PowerPoint yaratadi"""
-    prs = Presentation()
-    prs.slide_width = Inches(10)
-    prs.slide_height = Inches(7.5)
-
-    # Ranglar palitrasi (Navy Corporate Theme)
-    c_dark_navy = RGBColor(11, 29, 58)    # #0B1D3A
-    c_light_gray = RGBColor(245, 247, 250)  # #F5F7FA
-    c_pure_white = RGBColor(255, 255, 255)
-    c_text_dark = RGBColor(40, 50, 65)
-    c_accent_blue = RGBColor(0, 102, 204)  # #0066CC
-    c_accent_gold = RGBColor(212, 175, 55)  # #D4AF37
-
-    # 1-slayd: Premium Sarlavha Slaydi (To'q ko'k fonda)
-    blank_slide_layout = prs.slide_layouts[6]
-    slide = prs.slides.add_slide(blank_slide_layout)
-    
-    # Orqa fonni to'q ko'k qilish
-    bg_shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(10), Inches(7.5))
-    bg_shape.fill.solid()
-    bg_shape.fill.fore_color.rgb = c_dark_navy
-    bg_shape.line.fill.background()
-
-    # Sarlavha matni
-    title_box = slide.shapes.add_textbox(Inches(1), Inches(2.2), Inches(8), Inches(2))
-    tf = title_box.text_frame
-    tf.word_wrap = True
-    p1 = tf.paragraphs[0]
-    p1.text = topic.upper()
-    p1.font.name = "Georgia"
-    p1.font.size = Pt(40)
-    p1.font.bold = True
-    p1.font.color.rgb = c_pure_white
-    p1.alignment = PP_ALIGN.LEFT
-
-    # Kichik sarlavha (Gold accent)
-    p2 = tf.add_paragraph()
-    p2.text = "📈 STRATEGIK VA TAHLILIY HISOBOT\nKompaniya faoliyatini rivojlantirish dasturi"
-    p2.font.name = "Calibri"
-    p2.font.size = Pt(16)
-    p2.font.bold = True
-    p2.font.color.rgb = c_accent_gold
-    p2.space_before = Pt(20)
-
-    # 2-25 Slaydlar (Mckinsey standard: 2-kolonkali mukammal tuzilma)
-    for num in range(2, 26):
-        slide = prs.slides.add_slide(blank_slide_layout)
-        
-        # Orqa fon (Och kulrang)
-        bg = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(10), Inches(7.5))
-        bg.fill.solid()
-        bg.fill.fore_color.rgb = c_light_gray
-        bg.line.fill.background()
-
-        # Ma'lumotlarni AI dan olish
-        s_data = await get_ai_slide_content(topic, num)
-
-        # 1. Tepada Header chizig'i va Sarlavha
-        header_box = slide.shapes.add_textbox(Inches(0.6), Inches(0.4), Inches(8.8), Inches(1))
-        htf = header_box.text_frame
-        htf.word_wrap = True
-        
-        hp1 = htf.paragraphs[0]
-        hp1.text = s_data["title"]
-        hp1.font.name = "Georgia"
-        hp1.font.size = Pt(24)
-        hp1.font.bold = True
-        hp1.font.color.rgb = c_dark_navy
-
-        if s_data["subtitle"]:
-            hp2 = htf.add_paragraph()
-            hp2.text = s_data["subtitle"]
-            hp2.font.name = "Calibri"
-            hp2.font.size = Pt(12)
-            hp2.font.color.rgb = c_accent_blue
-            hp2.space_before = Pt(4)
-
-        # 2. Chap ustun: Asosiy ma'lumotlar (Bullets)
-        left_box = slide.shapes.add_textbox(Inches(0.6), Inches(1.6), Inches(5.4), Inches(4.5))
-        ltf = left_box.text_frame
-        ltf.word_wrap = True
-        
-        for idx, bullet in enumerate(s_data["bullets"]):
-            bp = ltf.paragraphs[0] if idx == 0 else ltf.add_paragraph()
-            bp.text = f"•  {bullet}"
-            bp.font.name = "Calibri"
-            bp.font.size = Pt(14)
-            bp.font.color.rgb = c_text_dark
-            bp.space_after = Pt(14)
-            bp.line_spacing = 1.15
-
-        # 3. O'ng ustun: Tahliliy blok (Highlight/Callout Box)
-        # Fon shakli (Oq to'rtburchak ko'k chiziq va yorqin foni bilan)
-        card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(6.3), Inches(1.6), Inches(3.1), Inches(4.5))
-        card.fill.solid()
-        card.fill.fore_color.rgb = c_pure_white
-        card.line.color.rgb = c_accent_blue
-        card.line.width = Pt(1.5)
-
-        # Tahliliy blok ichidagi matn
-        card_box = slide.shapes.add_textbox(Inches(6.4), Inches(1.8), Inches(2.9), Inches(4.1))
-        ctf = card_box.text_frame
-        ctf.word_wrap = True
-        
-        cp1 = ctf.paragraphs[0]
-        cp1.text = "STRATEGIK TAHLIL"
-        cp1.font.name = "Calibri"
-        cp1.font.size = Pt(12)
-        cp1.font.bold = True
-        cp1.font.color.rgb = c_accent_blue
-        cp1.space_after = Pt(12)
-
-        cp2 = ctf.add_paragraph()
-        cp2.text = s_data["callout"]
-        cp2.font.name = "Georgia"
-        cp2.font.size = Pt(14)
-        cp2.font.color.rgb = c_dark_navy
-        cp2.line_spacing = 1.25
-
-        # 4. Footer qismi
-        footer_box = slide.shapes.add_textbox(Inches(0.6), Inches(6.8), Inches(8.8), Inches(0.4))
-        ftf = footer_box.text_frame
-        fp = ftf.paragraphs[0]
-        fp.text = f"Loyiha: {topic[:35]}... | Slayd {num} / 25 | Maxfiy"
-        fp.font.name = "Calibri"
-        fp.font.size = Pt(9)
-        fp.font.color.rgb = RGBColor(150, 150, 150)
 
     filename = f"prezentatsiya_{user_id}_{int(time.time())}.pptx"
     prs.save(filename)
@@ -628,7 +671,10 @@ async def limit_command(m: Message):
     add_user(m.from_user.id, m.from_user.username, m.from_user.full_name)
 
     if is_admin(m.from_user.id):
-        await m.answer("👑 <b>Siz adminsiz!</b>\n\nSizga hech qanday cheklov va limitlar taalluqli emas.")
+        await m.answer(
+            "👑 <b>Siz adminsiz!</b>\n\n"
+            "Sizga hech qanday cheklov va limitlar taalluqli emas."
+        )
         return
 
     info = get_limit_info(m.from_user.id, FREE_LIMIT)
@@ -645,8 +691,20 @@ async def limit_command(m: Message):
         f"🔋 Qolgan: <b>{info['remaining']}</b> ta\n\n"
         f"🆔 Sizning ID: <code>{m.from_user.id}</code>"
     )
-    if info['remaining'] == 0:
+    if info["remaining"] == 0:
         text += "\n\n❗ Bepul limitlar tugagan, premium olish uchun adminga bog'laning."
+
+    await m.answer(text)
+
+
+@dp.message(Command("help"))
+async def help_command(m: Message):
+    text = (
+        "ℹ️ <b>Yordam</b>\n\n"
+        "• /start — botni boshlash\n"
+        "• /limit — qolgan limitni ko'rish\n"
+        "• /help — yordam\n"
+    )
     await m.answer(text)
 
 
@@ -658,6 +716,7 @@ async def limit_command(m: Message):
 async def admin_panel(m: Message):
     if not is_admin(m.from_user.id):
         return
+
     try:
         users_count, total_usage = get_stats()
         text = (
@@ -708,24 +767,36 @@ async def broadcast_command(m: Message):
 async def give_limit_command(m: Message):
     if not is_admin(m.from_user.id):
         return
+
     try:
         parts = m.text.split()
         if len(parts) < 3:
             await m.answer("❗ Format xato: <code>/give [id] [son]</code>")
             return
-        
+
         target_id = int(parts[1])
         amount = int(parts[2])
+
+        if amount <= 0:
+            await m.answer("❗ Miqdor 0 dan katta bo'lishi kerak.")
+            return
+
         success = add_premium_limit(target_id, amount)
 
         if success:
-            await m.answer(f"✅ Foydalanuvchi <code>{target_id}</code> hisobiga +{amount} ta premium limit qo'shildi!")
+            await m.answer(
+                f"✅ Foydalanuvchi <code>{target_id}</code> hisobiga +{amount} ta premium limit qo'shildi!"
+            )
             try:
-                await bot.send_message(target_id, f"🎉 Premium faollashtirildi!\nHisobingizga +{amount} yangi imkoniyatlar qo'shildi!")
+                await bot.send_message(
+                    target_id,
+                    f"🎉 Premium faollashtirildi!\nHisobingizga +{amount} yangi imkoniyatlar qo'shildi!"
+                )
             except Exception:
                 pass
         else:
             await m.answer("❌ Foydalanuvchi topilmadi.")
+
     except Exception as e:
         await m.answer(f"Xato: {e}")
 
@@ -734,18 +805,21 @@ async def give_limit_command(m: Message):
 async def reset_command(m: Message):
     if not is_admin(m.from_user.id):
         return
+
     try:
         parts = m.text.split()
         if len(parts) < 2:
             await m.answer("❗ Format: <code>/reset [id]</code>")
             return
-        
+
         target_id = int(parts[1])
         success = reset_user_usage(target_id)
+
         if success:
             await m.answer(f"✅ Foydalanuvchi <code>{target_id}</code> limiti muvaffaqiyatli tiklandi.")
         else:
             await m.answer("❌ Xatolik yuz berdi yoki foydalanuvchi topilmadi.")
+
     except Exception as e:
         await m.answer(f"Xato: {e}")
 
@@ -754,23 +828,27 @@ async def reset_command(m: Message):
 async def userinfo_command(m: Message):
     if not is_admin(m.from_user.id):
         return
+
     try:
         parts = m.text.split()
         if len(parts) < 2:
             await m.answer("❗ Format: <code>/userinfo [id]</code>")
             return
-        
+
         target_id = int(parts[1])
         info = get_user_info(target_id)
         if not info:
             await m.answer("❌ Foydalanuvchi bazadan topilmadi.")
             return
 
+        username = info.get("username")
+        safe_username = f"@{username}" if username and username != "Mavjud emas" else "Mavjud emas"
+
         text = (
             f"👤 <b>Foydalanuvchi ma'lumotlari:</b>\n\n"
             f"🆔 ID: <code>{info['user_id']}</code>\n"
             f"📛 Ism: {info['full_name']}\n"
-            f"🔗 Username: @{info['username']}\n"
+            f"🔗 Username: {safe_username}\n"
             f"📅 Sana: {info['joined_date']}\n\n"
             f"📊 <b>Limit ma'lumotlari:</b>\n"
             f"🎁 Ishlatilgan limit: {info['usage_count']} ta\n"
@@ -817,7 +895,7 @@ async def category_handler(m: Message):
         "🎵 Audio/Musiqa": (
             "🎵 <b>Google Lyria 3 Ovoz Studiyasi</b>\n\n"
             "Janr va yo'nalishni kiritishingiz bilan sizga musiqa bastalab beriladi:"
-        )
+        ),
     }
 
     default_text = (
@@ -836,7 +914,12 @@ async def generate_handler(m: Message):
     user_id = m.from_user.id
 
     if user_id not in user_category:
-        await m.answer("❗ Avval kategoriyalardan birini tanlang yoki botni qayta ishga tushirish uchun /start bosing.")
+        await m.answer("❗ Avval kategoriyalardan birini tanlang yoki /start bosing.")
+        return
+
+    user_text = (m.text or "").strip()
+    if not user_text:
+        await m.answer("❗ Tushunarsiz yoki bo'sh so'rov. Iltimos, qayta yozing.")
         return
 
     # Limit tekshiruvi (Adminlar cheksiz foydalana oladilar)
@@ -856,26 +939,30 @@ async def generate_handler(m: Message):
         await m.answer(tariff_text)
         return
 
-    category_name = user_category.pop(user_id)
-    user_text = m.text.strip()
-
-    if not user_text:
-        await m.answer("❗ Tushunarsiz yoki bo'sh so'rov. Iltimos, qayta yozing.")
-        user_category[user_id] = category_name
+    category_name = user_category.pop(user_id, None)
+    if not category_name:
+        await m.answer("❗ Kategoriya topilmadi. /start bosing.")
         return
 
     # === 1. KURS ISHI ===
     if category_name == "📚 Kurs Ishi":
-        msg = await m.answer("⏳ <b>Mukammal ilmiy ish yozilmoqda...</b>\nBarcha sahifalar, mundarija va adabiyotlar shakllantirilyapti. Bu bir necha daqiqa olishi mumkin.")
+        msg = await m.answer(
+            "⏳ <b>Mukammal ilmiy ish yozilmoqda...</b>\n"
+            "Barcha sahifalar, mundarija va adabiyotlar shakllantirilyapti. Bu bir necha daqiqa olishi mumkin."
+        )
         file_path = None
         try:
             file_path = await generate_coursework(user_text, user_id)
+            if not file_path or not os.path.exists(file_path):
+                raise RuntimeError("Kurs ishi fayli yaratilmadi")
+
             await m.answer_document(
                 FSInputFile(file_path),
                 caption=f"📚 <b>Kurs Ishi Tayyor!</b>\n\n📝 <b>Mavzu:</b> {user_text}\n📂 Times New Roman standardida Word (DOCX) fayl."
             )
         except Exception as e:
             logger.error(f"Kurs ishi xatosi: {e}")
+            user_category[user_id] = category_name
             await m.answer(f"❌ Kurs ishini yaratishda xatolik yuz berdi: {e}")
         finally:
             await safe_remove_file(file_path)
@@ -883,16 +970,23 @@ async def generate_handler(m: Message):
 
     # === 2. PREZENTATSIYA ===
     elif category_name == "📊 Prezentatsiya":
-        msg = await m.answer("⏳ <b>McKinsey Consulting Presentation Engine</b> ishga tushirildi. 25 ta premium slaydlar tayyorlanmoqda (1-2 daqiqa)...")
+        msg = await m.answer(
+            "⏳ <b>McKinsey Consulting Presentation Engine</b> ishga tushirildi.\n"
+            "25 ta premium slaydlar tayyorlanmoqda (1-2 daqiqa)..."
+        )
         file_path = None
         try:
             file_path = await create_presentation(user_text, user_id)
+            if not file_path or not os.path.exists(file_path):
+                raise RuntimeError("Prezentatsiya fayli yaratilmadi")
+
             await m.answer_document(
                 FSInputFile(file_path),
                 caption=f"📊 <b>Prezentatsiya Tayyor!</b>\n\n📝 <b>Mavzu:</b> {user_text}\n🏆 25 ta McKinsey andozasidagi professional tahlil slaydlari."
             )
         except Exception as e:
             logger.error(f"Prezentatsiya xatosi: {e}")
+            user_category[user_id] = category_name
             await m.answer(f"❌ Prezentatsiya yaratishda muammo yuz berdi: {e}")
         finally:
             await safe_remove_file(file_path)
@@ -904,11 +998,16 @@ async def generate_handler(m: Message):
         file_path = None
         try:
             file_path, error = await generate_video(user_text)
-            if file_path:
-                await m.answer_video(FSInputFile(file_path), caption=f"🎬 <b>Video:</b> {user_text}\n🔥 Google Veo Video Studio")
+            if file_path and os.path.exists(file_path):
+                await m.answer_video(
+                    FSInputFile(file_path),
+                    caption=f"🎬 <b>Video:</b> {user_text}\n🔥 Google Veo Video Studio"
+                )
             else:
-                await m.answer(f"❌ Xatolik: {error}")
+                raise RuntimeError(error or "Video yaratilmadi")
         except Exception as e:
+            logger.error(f"Video xatosi: {e}")
+            user_category[user_id] = category_name
             await m.answer(f"❌ Tizim xatosi: {e}")
         finally:
             await safe_remove_file(file_path)
@@ -920,11 +1019,16 @@ async def generate_handler(m: Message):
         file_path = None
         try:
             file_path, error = await generate_audio(user_text)
-            if file_path:
-                await m.answer_audio(FSInputFile(file_path), caption=f"🎵 <b>Musiqa:</b> {user_text}\n⚡ Google Lyria 3")
+            if file_path and os.path.exists(file_path):
+                await m.answer_audio(
+                    FSInputFile(file_path),
+                    caption=f"🎵 <b>Musiqa:</b> {user_text}\n⚡ Google Lyria 3"
+                )
             else:
-                await m.answer(f"❌ Xatolik: {error}")
+                raise RuntimeError(error or "Audio yaratilmadi")
         except Exception as e:
+            logger.error(f"Audio xatosi: {e}")
+            user_category[user_id] = category_name
             await m.answer(f"❌ Xatolik: {e}")
         finally:
             await safe_remove_file(file_path)
@@ -936,12 +1040,17 @@ async def generate_handler(m: Message):
         file_path = None
         try:
             file_path, error = await generate_image(user_text, category_name)
-            if file_path:
-                await m.answer_photo(FSInputFile(file_path), caption=f"🎨 <b>Kategoriya:</b> {category_name}\n📝 {user_text}")
+            if file_path and os.path.exists(file_path):
+                await m.answer_photo(
+                    FSInputFile(file_path),
+                    caption=f"🎨 <b>Kategoriya:</b> {category_name}\n📝 {user_text}"
+                )
             else:
-                await m.answer(f"❌ Tasvir yaratishda xato: {error}")
+                raise RuntimeError(error or "Tasvir yaratilmadi")
         except Exception as e:
-            await m.answer(f"❌ Tizim xatoligi: {e}")
+            logger.error(f"Rasm xatosi: {e}")
+            user_category[user_id] = category_name
+            await m.answer(f"❌ Tasvir yaratishda xato: {e}")
         finally:
             await safe_remove_file(file_path)
             await safe_delete(msg)
@@ -989,11 +1098,13 @@ async def main():
         logger.error("❌ BOT_TOKEN xatoligi: config.py yoki o'zgaruvchilarni tekshiring!")
         return
 
+    # TelegramConflictError oldini olish uchun webhookni tozalaymiz
     await bot.delete_webhook(drop_pending_updates=True)
 
     await bot.set_my_commands([
         BotCommand(command="start", description="🚀 Boshlash"),
         BotCommand(command="limit", description="📊 Limitni tekshirish"),
+        BotCommand(command="help", description="ℹ️ Yordam"),
     ])
 
     logger.info("=" * 50)
@@ -1002,9 +1113,8 @@ async def main():
     logger.info(f"🎁 Bepul limit: {FREE_LIMIT}")
     logger.info("=" * 50)
 
-    # Web server va botni parallel rejimda ishga tushirish
     web_task = asyncio.create_task(run_web_server())
-    polling_task = asyncio.create_task(dp.start_polling(bot, skip_updates=True))
+    polling_task = asyncio.create_task(dp.start_polling(bot))
 
     await asyncio.gather(web_task, polling_task)
 
