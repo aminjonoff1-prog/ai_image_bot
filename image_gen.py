@@ -4,13 +4,20 @@ import uuid
 
 from deep_translator import GoogleTranslator
 
+# Yangi rasmiy Google GenAI SDK importi
 try:
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types
     from config import GEMINI_API_KEY
-    if GEMINI_API_KEY:
-        genai.configure(api_key=GEMINI_API_KEY.strip())
-except Exception:
-    GEMINI_API_KEY = None
+    
+    if GEMINI_API_KEY and GEMINI_API_KEY.strip():
+        # Yangi kutubxonada Client asinxron rejim (aio) uchun quyidagicha yaratiladi
+        ai_client = genai.Client(api_key=GEMINI_API_KEY.strip())
+    else:
+        ai_client = None
+except Exception as e:
+    print(f"Gemini SDK yuklashda xato: {e}")
+    ai_client = None
 
 from config import STABILITY_API_KEY
 
@@ -34,11 +41,11 @@ NEGATIVE_PROMPT = (
     "low quality, blurry, watermark, text, letters, duplicate, ugly"
 )
 
+# Yangi tavsiya etilgan Gemini modellari ro'yxati
 GEMINI_MODELS = [
+    "gemini-2.5-flash",
     "gemini-2.0-flash",
     "gemini-1.5-flash",
-    "gemini-1.5-pro",
-    "gemini-pro",
 ]
 
 
@@ -62,8 +69,8 @@ def translate_uz_to_en(text: str) -> str:
 
 
 async def enhance_prompt(english_text: str, category: str) -> str:
-    """Gemini bilan promptni boyitadi. 10 sekund timeout."""
-    if not GEMINI_API_KEY:
+    """Yangi google-genai (asinxron) orqali promptni boyitadi. 10 sekund timeout."""
+    if not ai_client:
         return english_text
 
     base_style = CATEGORY.get(category, "")
@@ -77,17 +84,22 @@ async def enhance_prompt(english_text: str, category: str) -> str:
 
     for model_name in GEMINI_MODELS:
         try:
-            model = genai.GenerativeModel(model_name)
+            # Yangi SDKda asinxron chaqiruv: ai_client.aio.models.generate_content
             response = await asyncio.wait_for(
-                asyncio.to_thread(model.generate_content, system_prompt),
+                ai_client.aio.models.generate_content(
+                    model=model_name,
+                    contents=system_prompt
+                ),
                 timeout=10.0
             )
             result = (response.text or "").strip()
             if result:
                 return result
         except asyncio.TimeoutError:
+            print(f"Gemini {model_name} timeout berdi, keyingisiga o'tilmoqda...")
             continue
-        except Exception:
+        except Exception as e:
+            print(f"Gemini {model_name} xatolik: {e}, keyingisiga o'tilmoqda...")
             continue
 
     return english_text
