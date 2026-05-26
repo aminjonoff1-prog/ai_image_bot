@@ -22,6 +22,9 @@ def main_menu():
             KeyboardButton(text="🎮 Konsept Art"),
             KeyboardButton(text="🏢 Reklama Banneri"),
         ],
+        [
+            KeyboardButton(text="🔤 Ism Logo"),
+        ],
     ]
 
     return ReplyKeyboardMarkup(
