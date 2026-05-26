@@ -9,13 +9,21 @@ from aiogram.filters import Command
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-# --- CONFIG ---
+# ---------- CONFIG (Render env ustun bo'lsin) ----------
 try:
-    from config import BOT_TOKEN, FREE_LIMIT, ADMIN_ID
+    from config import BOT_TOKEN as CONFIG_BOT_TOKEN, FREE_LIMIT, GEMINI_API_KEY, ADMIN_ID
 except ImportError:
-    BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+    CONFIG_BOT_TOKEN = ""
     FREE_LIMIT = int(os.environ.get("FREE_LIMIT", "5"))
+    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
     ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
+
+# Renderda qo'yilgan BOT_TOKEN ishlaydi, bo'lmasa config dagisi
+BOT_TOKEN = os.environ.get("BOT_TOKEN", CONFIG_BOT_TOKEN)
+
+# Boshqa joyda BOT_TOKEN ni yana qayta import qilmang!
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN topilmadi. Render Environment va config.py ni tekshiring.")
 
 # --- DB ---
 from db import (
