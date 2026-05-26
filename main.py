@@ -9,7 +9,6 @@ from aiogram.filters import Command
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN topilmadi! Render Environment ga qo'ying.")
@@ -179,21 +178,22 @@ async def start_command(m: Message):
     )
     await m.answer(text, reply_markup=main_menu())
 
-    # Admin ga yangi foydalanuvchi haqida xabar
-    if is_new and ADMIN_ID:
+    # Admin ga yangi foydalanuvchi haqida xabar (Xavfsiz va to'g'rilangan)
+    if ADMIN_ID:
         try:
             username = f"@{m.from_user.username}" if m.from_user.username else "yo'q"
             admin_text = (
-                f"🆕 <b>Yangi foydalanuvchi!</b>\n\n"
+                f"🆕 <b>Yangi yoki faol foydalanuvchi!</b>\n\n"
                 f"👤 Ism: <b>{m.from_user.full_name}</b>\n"
                 f"🔗 Username: {username}\n"
                 f"🆔 ID: <code>{m.from_user.id}</code>\n"
+                f"📊 is_new holati: {is_new}\n"
             )
             users_count, _ = get_stats()
             admin_text += f"\n📊 Jami foydalanuvchilar: <b>{users_count}</b>"
-            await bot.send_message(ADMIN_ID, admin_text)
-        except Exception:
-            pass
+            await m.bot.send_message(chat_id=ADMIN_ID, text=admin_text)
+        except Exception as e:
+            logger.error(f"Adminga xabar yuborishda xatolik: {e}")
 
 @dp.message(Command("users"))
 async def users_list_command(m: Message):
@@ -214,9 +214,9 @@ async def users_list_command(m: Message):
             username = f"@{user['username']}" if user['username'] != "Mavjud emas" else "—"
             text += (
                 f"{i}. <b>{user['full_name']}</b>\n"
-                f"   🆔 <code>{user['user_id']}</code> | {username}\n"
-                f"   📊 Ishlatgan: {user['usage_count']} | 💎 Premium: {user['premium_limit']}\n"
-                f"   📅 {user['joined_date']}\n\n"
+                f"    🆔 <code>{user['user_id']}</code> | {username}\n"
+                f"    📊 Ishlatgan: {user['usage_count']} | 💎 Premium: {user['premium_limit']}\n"
+                f"    📅 {user['joined_date']}\n\n"
             )
 
         users_count, total_usage = get_stats()
@@ -297,7 +297,7 @@ async def broadcast_command(m: Message):
     s, f = 0, 0
     for uid in users:
         try:
-            await bot.send_message(uid, text); s += 1
+            await m.bot.send_message(chat_id=uid, text=text); s += 1
             await asyncio.sleep(0.05)
         except: f += 1
     await msg.edit_text(f"✅ Yuborildi: <b>{s}</b>\n❌ Xato: <b>{f}</b>")
@@ -313,7 +313,7 @@ async def give_limit_command(m: Message):
         tid, amt = int(parts[1]), int(parts[2])
         if add_premium_limit(tid, amt):
             await m.answer(f"✅ <code>{tid}</code> ga +{amt} limit.")
-            try: await bot.send_message(tid, f"🎉 +{amt} limit qo'shildi!")
+            try: await m.bot.send_message(chat_id=tid, text=f"🎉 +{amt} limit qo'shildi!")
             except: pass
         else: await m.answer("❌ Topilmadi.")
     except: await m.answer("❗ <code>/give 512345678 30</code>")
@@ -467,6 +467,7 @@ async def generate_handler(m: Message):
             else:
                 await m.answer(caption + f"\n\n❌ Logo yaratishda xato: {err}")
         except Exception as e:
+            logger.error(f"Ism Logo generatsiyasida xatolik: {e}", exc_info=True)
             await m.answer(f"❌ Xato: {e}")
         finally:
             await safe_remove_file(f)
@@ -489,6 +490,7 @@ async def generate_handler(m: Message):
             else:
                 await m.answer(f"❌ Xatolik: {err}")
         except Exception as e:
+            logger.error(f"Rasm generatsiyasida xatolik ({category}): {e}", exc_info=True)
             await m.answer(f"❌ Xato: {e}")
         finally:
             await safe_remove_file(f)
