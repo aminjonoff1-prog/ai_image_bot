@@ -332,3 +332,37 @@ def get_user_info(user_id):
         print(f"❌ User info xatosi: {e}")
         conn.close()
         return None
+
+def get_recent_users(limit=20):
+    """Oxirgi qo'shilgan foydalanuvchilarni qaytaradi"""
+    conn = get_conn()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            SELECT user_id, username, full_name, usage_count,
+                   COALESCE(premium_limit, 0) as premium_limit, joined_date
+            FROM users
+            ORDER BY joined_date DESC
+            LIMIT ?
+        """, (limit,))
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        users = []
+        for row in rows:
+            users.append({
+                "user_id": row[0],
+                "username": row[1],
+                "full_name": row[2],
+                "usage_count": row[3],
+                "premium_limit": row[4],
+                "joined_date": row[5]
+            })
+        return users
+
+    except Exception as e:
+        print(f"❌ get_recent_users xatosi: {e}")
+        conn.close()
+        return []
