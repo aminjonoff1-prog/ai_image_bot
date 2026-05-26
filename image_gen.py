@@ -16,7 +16,6 @@ from config import STABILITY_API_KEY
 
 URL = "https://api.stability.ai/v2beta/stable-image/generate/ultra"
 
-# Kategoriya uslublari
 CATEGORY = {
     "🎨 Logo": "professional modern minimalist logo, vector, clean design, white background",
     "🖼 Realistik": "ultra realistic photo, photorealistic, natural lighting, highly detailed, 8k",
@@ -35,21 +34,27 @@ NEGATIVE_PROMPT = (
     "low quality, blurry, watermark, text, letters, duplicate, ugly"
 )
 
+GEMINI_MODELS = [
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
+    "gemini-pro",
+]
+
 
 def translate_uz_to_en(text: str) -> str:
-    """O'zbekchadan inglizchaga ANIQ tarjima"""
+    """O'zbekchadan inglizchaga aniq tarjima"""
     try:
-        translated = GoogleTranslator(source='uz', target='en').translate(text)
-        if translated:
-            return translated.strip()
-    except Exception as e:
-        print(f"Tarjima xatosi: {e}")
+        result = GoogleTranslator(source='uz', target='en').translate(text)
+        if result and result.strip():
+            return result.strip()
+    except Exception:
+        pass
 
-    # Fallback: avtomatik til aniqlash
     try:
-        translated = GoogleTranslator(source='auto', target='en').translate(text)
-        if translated:
-            return translated.strip()
+        result = GoogleTranslator(source='auto', target='en').translate(text)
+        if result and result.strip():
+            return result.strip()
     except Exception:
         pass
 
@@ -57,45 +62,39 @@ def translate_uz_to_en(text: str) -> str:
 
 
 async def enhance_prompt(english_text: str, category: str) -> str:
-    """Gemini bilan promptni boyitadi (ixtiyoriy)"""
+    """Gemini bilan promptni boyitadi. 10 sekund timeout."""
     if not GEMINI_API_KEY:
         return english_text
 
     base_style = CATEGORY.get(category, "")
 
-    system_prompt = f"""
-You are a professional AI image prompt engineer.
+    system_prompt = (
+        f'The user wants an image of: "{english_text}"\n'
+        f'Category: "{base_style}"\n'
+        f'Keep the main subject EXACTLY. Add only visual details.\n'
+        f'Return only the final prompt. Max 2 sentences.'
+    )
 
-The user wants an image of:
-"{english_text}"
-
-Category style:
-"{base_style}"
-
-RULES:
-1. Keep the main subject EXACTLY as described
-2. Do NOT change or replace the subject
-3. Add only visual details: lighting, camera angle, composition
-4. Keep it short (max 2 sentences)
-5. Return only the final prompt
-
-Final prompt:
-"""
-
-    try:
-        model = genai.GenerativeModel("gemini-pro")
-        response = await asyncio.to_thread(model.generate_content, system_prompt)
-        result = response.text.strip()
-        if result:
-            return result
-    except Exception as e:
-        print(f"Gemini enhance xatosi: {e}")
+    for model_name in GEMINI_MODELS:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = await asyncio.wait_for(
+                asyncio.to_thread(model.generate_content, system_prompt),
+                timeout=10.0
+            )
+            result = (response.text or "").strip()
+            if result:
+                return result
+        except asyncio.TimeoutError:
+            continue
+        except Exception:
+            continue
 
     return english_text
 
 
 async def process_prompt(user_text: str, category: str):
-    """To'liq prompt yaratish jarayoni"""
+    """Prompt yaratish: tarjima + boyitish + himoya"""
     user_text = user_text.strip()
 
     if not user_text:
@@ -103,25 +102,30 @@ async def process_prompt(user_text: str, category: str):
 
     base_style = CATEGORY.get(category, "")
 
-    # 1-QADAM: O'zbekchadan inglizchaga ANIQ tarjima
-    english_text = await asyncio.to_thread(translate_uz_to_en, user_text)
+    # 1. Tarjima (timeout 8 sekund)
+    try:
+        english_text = await asyncio.wait_for(
+            asyncio.to_thread(translate_uz_to_en, user_text),
+            timeout=8.0
+        )
+    except asyncio.TimeoutError:
+        english_text = user_text
 
     print(f"ORIGINAL: {user_text}")
     print(f"TRANSLATED: {english_text}")
 
-    # 2-QADAM: Gemini bilan boyitish (ixtiyoriy)
+    # 2. Gemini bilan boyitish (timeout 10 sekund)
     enhanced = await enhance_prompt(english_text, category)
 
     print(f"ENHANCED: {enhanced}")
 
-    # 3-QADAM: Asosiy obyektni saqlash
+    # 3. Final prompt
     final_prompt = (
         f"{enhanced}, {base_style}. "
         f"The image must clearly show: {english_text}. "
         f"Do not change the main subject."
     )
 
-    # Banner uchun maxsus
     if category == "🏢 Reklama Banneri":
         final_prompt += ", no text, no letters, large empty space for typography"
 
@@ -146,30 +150,35 @@ async def generate_image(prompt: str, category: str):
     if err:
         return None, err
 
-    # Aspect ratio
     aspect_ratio = "16:9"
     if category in ["🎨 Logo", "💎 Brending"]:
         aspect_ratio = "1:1"
     elif category in ["📱 Avatar"]:
         aspect_ratio = "9:16"
 
-    async with httpx.AsyncClient(timeout=180) as client:
-        r = await client.post(
-            URL,
-            headers=headers,
-            data={
-                "prompt": final_prompt,
-                "negative_prompt": NEGATIVE_PROMPT,
-                "output_format": "png",
-                "aspect_ratio": aspect_ratio
-            },
-            files={"none": ("", b"")}
-        )
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            r = await client.post(
+                URL,
+                headers=headers,
+                data={
+                    "prompt": final_prompt,
+                    "negative_prompt": NEGATIVE_PROMPT,
+                    "output_format": "png",
+                    "aspect_ratio": aspect_ratio
+                },
+                files={"none": ("", b"")}
+            )
 
-    if r.status_code == 200:
-        filename = f"temp_{uuid.uuid4().hex}.png"
-        with open(filename, "wb") as f:
-            f.write(r.content)
-        return filename, None
+        if r.status_code == 200:
+            filename = f"temp_{uuid.uuid4().hex}.png"
+            with open(filename, "wb") as f:
+                f.write(r.content)
+            return filename, None
 
-    return None, f"Xato ({r.status_code}): {r.text[:200]}"
+        return None, f"Xato ({r.status_code}): {r.text[:200]}"
+
+    except httpx.TimeoutException:
+        return None, "Rasm yaratish vaqti tugadi. Qayta urinib ko'ring."
+    except Exception as e:
+        return None, f"Kutilmagan xato: {e}"
