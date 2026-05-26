@@ -23,15 +23,12 @@ else:
 
 
 def _debug_log(msg: str):
-    # Kerak bo'lsa o'chirish/yoqish uchun:
-    # Render env ga DB_DEBUG=1 qo'ying
     if os.environ.get("DB_DEBUG", "").strip() in ("1", "true", "TRUE", "yes"):
         print("[DB_DEBUG]", msg)
 
 
 def get_conn():
     if USE_POSTGRES:
-        # DATABASE_URL odatda: postgresql://user:pass@host:port/db
         _debug_log("Connecting to PostgreSQL...")
         return psycopg2.connect(DATABASE_URL, sslmode=POSTGRES_SSLMODE)
     else:
@@ -41,7 +38,8 @@ def get_conn():
 
 def execute_query(query, params=None, fetch=False, fetchone=False):
     """
-    PostgreSQL uchun querydagi '?' ni avtomatik '%s' ga aylantiradi.
+    PostgreSQL uchun querydagi '?' ni avtomatik '%s' ga aylantiradi va 
+    tranzaksiyalarni xavfsiz yakunlaydi.
     """
     conn = get_conn()
     cursor = conn.cursor()
@@ -60,23 +58,28 @@ def execute_query(query, params=None, fetch=False, fetchone=False):
         elif fetch:
             result = cursor.fetchall()
 
-        conn.commit()
+        # Ma'lumotlarni o'zgartiruvchi so'rovlar uchun har doim commit qilamiz
+        if not fetch and not fetchone:
+            conn.commit()
+        else:
+            # PostgreSQL da SELECT so'rovlaridan keyin ham commit/rollback qilish ulanishni bo'shatadi
+            conn.commit() 
+
         return result
 
     except Exception as e:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except:
+            pass
         print(f"❌ DB xatosi: {e}")
         return None
 
     finally:
-        try:
-            cursor.close()
-        except Exception:
-            pass
-        try:
-            conn.close()
-        except Exception:
-            pass
+        try: cursor.close()
+        except: pass
+        try: conn.close()
+        except: pass
 
 
 def _sqlite_has_column(table: str, column: str) -> bool:
@@ -87,10 +90,8 @@ def _sqlite_has_column(table: str, column: str) -> bool:
         cols = [row[1] for row in cursor.fetchall()]
         return column in cols
     finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+        try: conn.close()
+        except: pass
 
 
 def init_db():
@@ -123,7 +124,7 @@ def init_db():
             """)
             conn.commit()
 
-            # eski bazada bo'lishi mumkin bo'lgan ustunlar migration
+            # Eski bazada bo'lishi mumkin bo'lgan ustunlar migration
             if not _sqlite_has_column("users", "premium_limit"):
                 cursor.execute("ALTER TABLE users ADD COLUMN premium_limit INTEGER DEFAULT 0")
             if not _sqlite_has_column("users", "full_name"):
@@ -141,20 +142,14 @@ def init_db():
     except Exception as e:
         print(f"❌ init_db xatosi: {e}")
     finally:
-        try:
-            cursor.close()
-        except Exception:
-            pass
-        try:
-            conn.close()
-        except Exception:
-            pass
+        try: cursor.close()
+        except: pass
+        try: conn.close()
+        except: pass
 
     if USE_POSTGRES:
-        try:
-            host = urlparse(DATABASE_URL).hostname
-        except Exception:
-            host = "unknown"
+        try: host = urlparse(DATABASE_URL).hostname
+        except: host = "unknown"
         print(f"✅ Baza init tugadi (PostgreSQL) host={host}")
     else:
         print("✅ Baza init tugadi (SQLite)")
