@@ -1,134 +1,137 @@
 import httpx
 import asyncio
 import uuid
-import google.generativeai as genai
-from config import STABILITY_API_KEY, GEMINI_API_KEY
+
+from deep_translator import GoogleTranslator
+
+try:
+    import google.generativeai as genai
+    from config import GEMINI_API_KEY
+    if GEMINI_API_KEY:
+        genai.configure(api_key=GEMINI_API_KEY.strip())
+except Exception:
+    GEMINI_API_KEY = None
+
+from config import STABILITY_API_KEY
 
 URL = "https://api.stability.ai/v2beta/stable-image/generate/ultra"
 
-gemini_model = None
-
-if GEMINI_API_KEY:
-    try:
-        genai.configure(api_key=GEMINI_API_KEY.strip())
-        gemini_model = genai.GenerativeModel("gemini-pro")
-    except Exception as e:
-        print(f"Gemini sozlash xatosi: {e}")
-
-
+# Kategoriya uslublari
 CATEGORY = {
-    "🎨 Logo": "professional modern minimalist logo, vector, clean design, branding, white background",
-    "🖼 Realistik": "ultra realistic photo, photorealistic, natural lighting, highly detailed, realistic colors",
+    "🎨 Logo": "professional modern minimalist logo, vector, clean design, white background",
+    "🖼 Realistik": "ultra realistic photo, photorealistic, natural lighting, highly detailed, 8k",
     "📱 Avatar": "professional portrait avatar, profile picture, detailed face, studio lighting",
-    "🏠 Interyer": "professional interior design, photorealistic room render, modern furniture",
-    "🌄 Landscape": "epic realistic landscape photography, nature, cinematic sky, detailed environment",
-    "🖥 UI/UX Web Dizayn": "professional UI/UX web design, landing page, modern interface, figma style",
-    "🏢 3D Arxitektura": "highly detailed 3D architecture render, modern exterior, realistic materials",
+    "🏠 Interyer": "professional interior design, photorealistic room, modern furniture, cozy",
+    "🌄 Landscape": "epic realistic landscape photography, nature, cinematic, detailed",
+    "🖥 UI/UX Web Dizayn": "professional UI/UX web design, landing page, modern, figma style",
+    "🏢 3D Arxitektura": "highly detailed 3D architecture render, modern building, realistic",
     "💎 Brending": "brand identity mockup, elegant branding, premium business design",
-    "🎮 Konsept Art": "epic concept art, cinematic composition, highly detailed environment",
-    "🏢 Reklama Banneri": "professional advertising banner background, clean composition, large empty text area"
+    "🎮 Konsept Art": "epic concept art, cinematic composition, highly detailed, artstation",
+    "🏢 Reklama Banneri": "advertising banner background, clean composition, empty text area",
 }
 
 NEGATIVE_PROMPT = (
-    "wrong subject, unrelated object, random object, extra objects, distorted, deformed, "
-    "low quality, blurry, watermark, signature, text, letters, misspelled text, duplicate"
+    "wrong subject, unrelated object, extra objects, distorted, deformed, "
+    "low quality, blurry, watermark, text, letters, duplicate, ugly"
 )
 
-UZ_EN_FALLBACK = {
-    "quyosh": "the sun in the sky",
-    "oy": "the moon in the night sky",
-    "yulduz": "a bright star",
-    "osmon": "clear blue sky",
-    "tog": "mountain",
-    "tog'": "mountain",
-    "daryo": "river",
-    "dengiz": "sea",
-    "mashina": "modern car",
-    "uy": "modern house",
-    "daraxt": "green tree",
-    "gul": "beautiful flower",
-    "it": "dog",
-    "mushuk": "cat",
-    "ot": "horse",
-    "sher": "lion",
-    "burgut": "eagle"
-}
+
+def translate_uz_to_en(text: str) -> str:
+    """O'zbekchadan inglizchaga ANIQ tarjima"""
+    try:
+        translated = GoogleTranslator(source='uz', target='en').translate(text)
+        if translated:
+            return translated.strip()
+    except Exception as e:
+        print(f"Tarjima xatosi: {e}")
+
+    # Fallback: avtomatik til aniqlash
+    try:
+        translated = GoogleTranslator(source='auto', target='en').translate(text)
+        if translated:
+            return translated.strip()
+    except Exception:
+        pass
+
+    return text
 
 
-def fallback_translate(text: str) -> str:
-    cleaned = text.strip().lower()
-    return UZ_EN_FALLBACK.get(cleaned, text)
+async def enhance_prompt(english_text: str, category: str) -> str:
+    """Gemini bilan promptni boyitadi (ixtiyoriy)"""
+    if not GEMINI_API_KEY:
+        return english_text
 
-
-async def process_prompt(user_text, category):
     base_style = CATEGORY.get(category, "")
-    user_text = user_text.strip()
-
-    if not user_text:
-        return None, "Prompt bo'sh bo'lmasligi kerak."
-
-    # Juda qisqa promptlar uchun fallback
-    translated = fallback_translate(user_text)
-
-    if not gemini_model:
-        final_prompt = (
-            f"{translated}, {base_style}. "
-            f"The image must show exactly this subject: {translated}. "
-            f"No unrelated objects."
-        )
-        return final_prompt, None
 
     system_prompt = f"""
-You are a strict Uzbek-to-English AI image prompt converter.
+You are a professional AI image prompt engineer.
 
-USER REQUEST:
-{user_text}
+The user wants an image of:
+"{english_text}"
 
-CATEGORY STYLE:
-{base_style}
+Category style:
+"{base_style}"
 
-STRICT RULES:
-1. Preserve the user's main subject exactly.
-2. Do not replace the object with another object.
-3. If user says 'quyosh', it must mean the sun in the sky.
-4. Translate Uzbek into accurate English.
-5. Add only relevant visual details.
-6. No unrelated objects.
-7. Return only one final English image prompt.
+RULES:
+1. Keep the main subject EXACTLY as described
+2. Do NOT change or replace the subject
+3. Add only visual details: lighting, camera angle, composition
+4. Keep it short (max 2 sentences)
+5. Return only the final prompt
 
 Final prompt:
 """
 
     try:
-        response = await asyncio.to_thread(gemini_model.generate_content, system_prompt)
-        final_prompt = response.text.strip()
-
-        if not final_prompt:
-            final_prompt = translated
-
-        final_prompt += (
-            f". The image must clearly depict: {translated}. "
-            f"Do not change the main subject. No unrelated objects."
-        )
-
-        if category == "🏢 Reklama Banneri":
-            final_prompt += ", large empty space for text, no letters, no typography"
-
-        print("USER:", user_text)
-        print("FINAL:", final_prompt)
-
-        return final_prompt, None
-
+        model = genai.GenerativeModel("gemini-pro")
+        response = await asyncio.to_thread(model.generate_content, system_prompt)
+        result = response.text.strip()
+        if result:
+            return result
     except Exception as e:
-        print(f"Prompt xatosi: {e}")
-        final_prompt = (
-            f"{translated}, {base_style}. "
-            f"The image must show exactly: {translated}. No unrelated objects."
-        )
-        return final_prompt, None
+        print(f"Gemini enhance xatosi: {e}")
+
+    return english_text
 
 
-async def generate_image(prompt, category):
+async def process_prompt(user_text: str, category: str):
+    """To'liq prompt yaratish jarayoni"""
+    user_text = user_text.strip()
+
+    if not user_text:
+        return None, "Prompt bo'sh bo'lmasligi kerak."
+
+    base_style = CATEGORY.get(category, "")
+
+    # 1-QADAM: O'zbekchadan inglizchaga ANIQ tarjima
+    english_text = await asyncio.to_thread(translate_uz_to_en, user_text)
+
+    print(f"ORIGINAL: {user_text}")
+    print(f"TRANSLATED: {english_text}")
+
+    # 2-QADAM: Gemini bilan boyitish (ixtiyoriy)
+    enhanced = await enhance_prompt(english_text, category)
+
+    print(f"ENHANCED: {enhanced}")
+
+    # 3-QADAM: Asosiy obyektni saqlash
+    final_prompt = (
+        f"{enhanced}, {base_style}. "
+        f"The image must clearly show: {english_text}. "
+        f"Do not change the main subject."
+    )
+
+    # Banner uchun maxsus
+    if category == "🏢 Reklama Banneri":
+        final_prompt += ", no text, no letters, large empty space for typography"
+
+    print(f"FINAL: {final_prompt}")
+
+    return final_prompt, None
+
+
+async def generate_image(prompt: str, category: str):
+    """Stability AI orqali rasm yaratish"""
     api_key = STABILITY_API_KEY.strip() if STABILITY_API_KEY else ""
 
     if not api_key:
@@ -143,6 +146,7 @@ async def generate_image(prompt, category):
     if err:
         return None, err
 
+    # Aspect ratio
     aspect_ratio = "16:9"
     if category in ["🎨 Logo", "💎 Brending"]:
         aspect_ratio = "1:1"
@@ -168,4 +172,4 @@ async def generate_image(prompt, category):
             f.write(r.content)
         return filename, None
 
-    return None, f"{r.status_code}: {r.text}"
+    return None, f"Xato ({r.status_code}): {r.text[:200]}"
