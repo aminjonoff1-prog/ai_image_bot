@@ -5,3 +5,4 @@ httpx
 google-generativeai>=0.8.0
 deep-translator
 Pillow
+psycopg2-binary
