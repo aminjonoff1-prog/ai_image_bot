@@ -9,15 +9,13 @@ from aiogram.filters import Command
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-
+# --- ATROF-MUHIT O'ZGARUVCHILARI ---
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN topilmadi! Render Environment ga qo'ying.")
 
 FREE_LIMIT = int(os.environ.get("FREE_LIMIT", "5"))
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
-
-# GEMINI_API_KEY faqat kerak bo'lsa:
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 # --- DB FUNKSIYALARI ---
@@ -36,11 +34,10 @@ from name_logo import generate_name_logo_info
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# --- BOT ---
-bot = Bot(token=BOT_TOKEN.strip(), default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+# --- BOT & DISPATCHER ---
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 user_category = {}
-
 
 # ============================================================
 # YORDAMCHI FUNKSIYALAR
@@ -50,17 +47,20 @@ def is_admin(uid: int) -> bool:
     return uid == ADMIN_ID
 
 async def safe_delete(msg):
-    try: await msg.delete()
-    except: pass
+    try: 
+        await msg.delete()
+    except: 
+        pass
 
 async def safe_remove_file(f):
     try:
-        if f and os.path.exists(f): os.remove(f)
-    except: pass
-
+        if f and os.path.exists(f): 
+            os.remove(f)
+    except: 
+        pass
 
 # ============================================================
-# PROMPT NAMUNALAR (ALOHIDA BO'LIM)
+# PROMPT NAMUNALAR
 # ============================================================
 
 PROMPT_SAMPLES = {
@@ -149,14 +149,12 @@ PROMPT_SAMPLES = {
     ),
 }
 
-
 # ============================================================
 # FOYDALANUVCHI HANDLERLARI
 # ============================================================
 
 @dp.message(Command("start"))
 async def start_command(m: Message):
-    # Tugma qotmasligi uchun DB funksiyasi alohida thread'ga olindi
     is_new = await asyncio.to_thread(add_user, m.from_user.id, m.from_user.username, m.from_user.full_name)
 
     text = (
@@ -180,7 +178,6 @@ async def start_command(m: Message):
     )
     await m.answer(text, reply_markup=main_menu())
 
-    # Adminga xabar berish mantiqi xavfsiz holatga keltirildi
     if ADMIN_ID:
         try:
             username = f"@{m.from_user.username}" if m.from_user.username else "yo'q"
@@ -200,7 +197,7 @@ async def start_command(m: Message):
 
 @dp.message(Command("users"))
 async def users_list_command(m: Message):
-    if not is_admin(m.from_user.id):
+    if not is_admin(m.from_user.id): 
         return
 
     try:
@@ -224,7 +221,6 @@ async def users_list_command(m: Message):
 
         users_count, total_usage = await asyncio.to_thread(get_stats)
         text += f"📊 <b>Jami:</b> {users_count} ta foydalanuvchi, {total_usage} ta generatsiya"
-
         await m.answer(text)
 
     except Exception as e:
@@ -380,7 +376,7 @@ async def userinfo_command(m: Message):
 
 
 # ============================================================
-# PROMPT NAMUNALAR BO'LIMI (ALOHIDA)
+# PROMPT NAMUNALAR BO'LIMI
 # ============================================================
 
 @dp.message(F.text == "📝 Prompt Namunalar")
@@ -425,7 +421,7 @@ async def category_handler(m: Message):
             "🔤 <b>Ism Logo</b>\n\n"
             "Ism yoki brand nomi yozing.\n\n"
             "Bot sizga:\n"
-            "📖 Ism ma'sensini\n"
+            "📖 Ism ma'nosini\n"
             "💡 Logo g'oyasini\n"
             "🎨 Tayyor logoni\n"
             "yaratib beradi.\n\n"
@@ -454,7 +450,6 @@ async def generate_handler(m: Message):
     if not user_text:
         return
 
-    # Limit tekshiruvi to'liq asinxron ipga o'tkazildi (Bloklanish yo'qotildi)
     is_admin_user = is_admin(user_id)
     has_limit = await asyncio.to_thread(check_limit, user_id, FREE_LIMIT)
 
@@ -534,31 +529,44 @@ async def run_web_server():
     app.router.add_get("/health", hp)
     runner = web.AppRunner(app)
     await runner.setup()
-    await web.TCPSite(runner, "0.0.0.0", int(os.environ.get("PORT", 8080))).start()
+    # Portni muhit o'zgaruvchisidan o'qiymiz
+    port = int(os.environ.get("PORT", 10000))
+    await web.TCPSite(runner, "0.0.0.0", port).start()
+    logger.info(f"🌐 Veb-server port {port} da ishga tushdi.")
 
 
 # ============================================================
-# MAIN
+# MAIN JALAYONI (SUG'URTALANGAN INTEGRATSIYA)
 # ============================================================
 
 async def main():
+    # 1. Ma'lumotlar bazasini tekshirish
     init_db()
-    if not BOT_TOKEN:
-        logger.error("BOT_TOKEN yo'q!"); return
-
-    await bot.delete_webhook(drop_pending_updates=True)
+    
+    # 2. Telegram buyruqlarini o'rnatish
     await bot.set_my_commands([
         BotCommand(command="start", description="🚀 Boshlash"),
         BotCommand(command="limit", description="📊 Limit"),
         BotCommand(command="help", description="ℹ️ Yordam"),
     ])
 
-    logger.info("🤖 Bot ishga tushdi!")
-    await asyncio.gather(run_web_server(), dp.start_polling(bot, skip_updates=True))
+    # 3. Konfliktni oldini olish (Muxim qadam!)
+    # Polling boshlanishidan oldin barcha eski kesh xabarlarni o'chirib tashlaymiz
+    await bot.delete_webhook(drop_pending_updates=True)
+    await asyncio.sleep(1) # Render parallel nusxalarni yopishi uchun vaqt beramiz
+
+    logger.info("🤖 Bot va pooling jarayoni muvaffaqiyatli tiklandi!")
+    
+    # 4. Server va Pollingni parallel ravishda mutlaqo xavfsiz boshlaymiz
+    # handle_signals=False o'rnatildi, bu Render o'z signallari (SIGTERM) orqali jarayonlarni konfliktlarsiz o'chirib-yoqishi uchun shart
+    await asyncio.gather(
+        run_web_server(),
+        dp.start_polling(bot, skip_updates=True, handle_signals=False)
+    )
 
 
 if __name__ == "__main__":
-    try: 
+    try:
         asyncio.run(main())
-    except KeyboardInterrupt: 
-        logger.info("Bot to'xtatildi.")
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Bot tizimi toza holatda to'xtatildi.")
