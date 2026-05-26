@@ -192,6 +192,38 @@ async def start_command(m: Message):
         except Exception:
             pass
 
+@dp.message(Command("users"))
+async def users_list_command(m: Message):
+    if not is_admin(m.from_user.id):
+        return
+
+    try:
+        from db import get_recent_users
+        users = get_recent_users(20)
+
+        if not users:
+            await m.answer("❌ Foydalanuvchilar topilmadi.")
+            return
+
+        text = "👥 <b>Oxirgi 20 ta foydalanuvchi:</b>\n\n"
+
+        for i, user in enumerate(users, 1):
+            username = f"@{user['username']}" if user['username'] != "Mavjud emas" else "—"
+            text += (
+                f"{i}. <b>{user['full_name']}</b>\n"
+                f"   🆔 <code>{user['user_id']}</code> | {username}\n"
+                f"   📊 Ishlatgan: {user['usage_count']} | 💎 Premium: {user['premium_limit']}\n"
+                f"   📅 {user['joined_date']}\n\n"
+            )
+
+        users_count, total_usage = get_stats()
+        text += f"📊 <b>Jami:</b> {users_count} ta foydalanuvchi, {total_usage} ta generatsiya"
+
+        await m.answer(text)
+
+    except Exception as e:
+        await m.answer(f"Xato: {e}")
+        
 @dp.message(Command("limit"))
 async def limit_command(m: Message):
     add_user(m.from_user.id, m.from_user.username, m.from_user.full_name)
