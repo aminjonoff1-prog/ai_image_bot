@@ -2,7 +2,7 @@ aiogram
 aiohttp
 python-dotenv
 httpx
-google-generativeai>=0.8.0
+google-genai
 deep-translator
 Pillow
 psycopg2-binary
