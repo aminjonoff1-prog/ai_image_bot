@@ -70,6 +70,7 @@ def init_db():
 
 
 def add_user(user_id, username, full_name):
+    """Yangi foydalanuvchini qo'shadi. Yangi bo'lsa True qaytaradi."""
     conn = get_conn()
     cursor = conn.cursor()
 
@@ -82,25 +83,27 @@ def add_user(user_id, username, full_name):
         result = cursor.fetchone()
 
         if result:
+            # Eski user — ma'lumotlarni yangilash
             cursor.execute("""
-                UPDATE users
-                SET username = ?, full_name = ?
-                WHERE user_id = ?
+                UPDATE users SET username = ?, full_name = ? WHERE user_id = ?
             """, (safe_username, safe_fullname, user_id))
-        else:
-            cursor.execute("""
-                INSERT INTO users (
-                    user_id, username, full_name, usage_count, premium_limit, joined_date
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (user_id, safe_username, safe_fullname, 0, 0, now))
+            conn.commit()
+            conn.close()
+            return False  # Yangi emas
 
+        # Yangi user
+        cursor.execute("""
+            INSERT INTO users (user_id, username, full_name, usage_count, premium_limit, joined_date)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (user_id, safe_username, safe_fullname, 0, 0, now))
         conn.commit()
+        conn.close()
+        return True  # Yangi user
 
     except Exception as e:
-        print(f"❌ Foydalanuvchi qo'shishda xatolik: {e}")
-
-    conn.close()
+        print(f"❌ add_user xatosi: {e}")
+        conn.close()
+        return False
 
 
 def check_limit(user_id, free_limit):
