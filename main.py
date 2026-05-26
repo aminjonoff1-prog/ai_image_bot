@@ -11,11 +11,10 @@ from aiogram.enums import ParseMode
 
 # --- CONFIG IMPORT ---
 try:
-    from config import BOT_TOKEN, FREE_LIMIT, GEMINI_API_KEY, ADMIN_ID
+    from config import BOT_TOKEN, FREE_LIMIT, ADMIN_ID
 except ImportError:
     BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
     FREE_LIMIT = int(os.environ.get("FREE_LIMIT", "5"))
-    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
     ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 
 # --- DB FUNKSIYALARI ---
@@ -34,8 +33,6 @@ from db import (
 # --- MODULLAR ---
 from keyboards import main_menu
 from image_gen import generate_image
-from video_gen import generate_video
-from audio_gen import generate_audio
 
 # --- LOGGING ---
 logging.basicConfig(
@@ -53,6 +50,7 @@ dp = Dispatcher()
 
 # --- FOYDALANUVCHI HOLATLARI ---
 user_category = {}
+
 
 # ============================================================
 # YORDAMCHI FUNKSIYALAR
@@ -87,7 +85,7 @@ async def start_command(m: Message):
 
     text = (
         f"👋 Salom, <b>{m.from_user.full_name}</b>!\n\n"
-        f"🤖 Men AI media generator botman.\n\n"
+        f"🤖 Men AI rasm va dizayn generator botman.\n\n"
         f"📋 <b>Imkoniyatlarim:</b>\n"
         f"🎨 Logo\n"
         f"🖼 Realistik rasm\n"
@@ -98,11 +96,10 @@ async def start_command(m: Message):
         f"🏢 3D Arxitektura\n"
         f"💎 Brending\n"
         f"🎮 Konsept Art\n"
-        f"🏢 Reklama Banneri\n"
-        f"🎬 Video Generatsiya\n"
-        f"🎵 Audio/Musiqa\n\n"
+        f"🏢 Reklama Banneri\n\n"
         f"⚡ Pastdagi menyudan kategoriyani tanlang."
     )
+
     await m.answer(text, reply_markup=main_menu())
 
 
@@ -128,6 +125,10 @@ async def limit_command(m: Message):
         f"🔋 Qolgan: <b>{info['remaining']}</b> ta\n\n"
         f"🆔 Sizning ID: <code>{m.from_user.id}</code>"
     )
+
+    if info["remaining"] == 0:
+        text += "\n\n❗ Premium limit olish uchun adminga yozing."
+
     await m.answer(text)
 
 
@@ -256,11 +257,13 @@ async def userinfo_command(m: Message):
             await m.answer("❌ Foydalanuvchi topilmadi.")
             return
 
+        username = info["username"] if info["username"] else "yo'q"
+
         text = (
             f"👤 <b>Foydalanuvchi ma'lumoti</b>\n\n"
             f"🆔 ID: <code>{info['user_id']}</code>\n"
             f"📛 Ism: {info['full_name']}\n"
-            f"🔗 Username: @{info['username']}\n"
+            f"🔗 Username: @{username}\n"
             f"📅 Sana: {info['joined_date']}\n"
             f"📊 Ishlatilgan: {info['usage_count']}\n"
             f"💎 Premium: {info['premium_limit']}"
@@ -285,8 +288,6 @@ CATEGORIES = [
     "💎 Brending",
     "🎮 Konsept Art",
     "🏢 Reklama Banneri",
-    "🎬 Video Generatsiya",
-    "🎵 Audio/Musiqa",
 ]
 
 @dp.message(F.text.in_(CATEGORIES))
@@ -294,9 +295,11 @@ async def category_handler(m: Message):
     user_category[m.from_user.id] = m.text
 
     messages = {
-        "🎬 Video Generatsiya": "🎬 Video uchun tavsif yozing:",
-        "🎵 Audio/Musiqa": "🎵 Audio yoki musiqa uchun tavsif yozing:",
-        "🏢 Reklama Banneri": "🏢 Banner uchun fon va tasvir tavsifini yozing:",
+        "🏢 Reklama Banneri": (
+            "🏢 <b>Reklama Banneri</b>\n\n"
+            "Banner uchun fon va tasvir tavsifini yozing.\n"
+            "❗ Matn yozmang, faqat dizayn va fonni yozing."
+        )
     }
 
     await m.answer(messages.get(m.text, f"✍️ <b>{m.text}</b> uchun tavsif yozing:"))
@@ -328,50 +331,19 @@ async def generate_handler(m: Message):
 
     category = user_category.pop(user_id)
 
-    if category == "🎬 Video Generatsiya":
-        msg = await m.answer("⏳ Video tayyorlanmoqda...")
-        f = None
-        try:
-            f, err = await generate_video(user_text)
-            if f and os.path.exists(f):
-                await m.answer_video(FSInputFile(f), caption="🎬 Video tayyor")
-            else:
-                await m.answer(f"❌ Xatolik: {err}")
-        except Exception as e:
-            await m.answer(f"❌ Xato: {e}")
-        finally:
-            await safe_remove_file(f)
-            await safe_delete(msg)
-
-    elif category == "🎵 Audio/Musiqa":
-        msg = await m.answer("⏳ Audio tayyorlanmoqda...")
-        f = None
-        try:
-            f, err = await generate_audio(user_text)
-            if f and os.path.exists(f):
-                await m.answer_audio(FSInputFile(f), caption="🎵 Audio tayyor")
-            else:
-                await m.answer(f"❌ Xatolik: {err}")
-        except Exception as e:
-            await m.answer(f"❌ Xato: {e}")
-        finally:
-            await safe_remove_file(f)
-            await safe_delete(msg)
-
-    else:
-        msg = await m.answer("⏳ Rasm yaratilmoqda...")
-        f = None
-        try:
-            f, err = await generate_image(user_text, category)
-            if f and os.path.exists(f):
-                await m.answer_photo(FSInputFile(f), caption=f"🎨 {category}")
-            else:
-                await m.answer(f"❌ Xatolik: {err}")
-        except Exception as e:
-            await m.answer(f"❌ Xato: {e}")
-        finally:
-            await safe_remove_file(f)
-            await safe_delete(msg)
+    msg = await m.answer("⏳ Rasm yaratilmoqda...")
+    f = None
+    try:
+        f, err = await generate_image(user_text, category)
+        if f and os.path.exists(f):
+            await m.answer_photo(FSInputFile(f), caption=f"🎨 <b>{category}</b>\n📝 {user_text}")
+        else:
+            await m.answer(f"❌ Xatolik: {err}")
+    except Exception as e:
+        await m.answer(f"❌ Xato: {e}")
+    finally:
+        await safe_remove_file(f)
+        await safe_delete(msg)
 
 
 # ============================================================
