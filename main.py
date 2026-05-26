@@ -414,9 +414,9 @@ async def create_presentation(topic: str, user_id: int, status_msg=None) -> str:
 @dp.message(Command("start"))
 async def start_command(m: Message):
     add_user(m.from_user.id, m.from_user.username, m.from_user.full_name)
-    await m.answer(f"👋 Salom, <b>{m.from_user.full_name}</b>!\n\n🤖 Men AI professional dizaynerman.\n📊 25 ta slaydli premium prezentatsiya yarataman.", reply_markup=main_menu())
+    await m.answer(f"👋 Salom, <b>{m.from_user.full_name}</b>!\n\n🤖 Men AI professional dizaynerman", reply_markup=main_menu())
 
-@dp.message(F.text.in_(["📊 Prezentatsiya", "🎨 Logo", "🎬 Video Generatsiya", "🎵 Audio/Musiqa", "📚 Kurs Ishi"]))
+@dp.message(F.text.in_(["📊 Prezentatsiya", "🎨 Logo", "📚 Kurs Ishi"]))
 async def category_handler(m: Message):
     user_category[m.from_user.id] = m.text
     await m.answer(f"✍️ <b>{m.text}</b> uchun mavzu yozing:")
