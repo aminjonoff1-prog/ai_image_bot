@@ -1,53 +1,48 @@
 import asyncio
-import google.generativeai as genai
-from config import GEMINI_API_KEY
 
-gemini_model = None
-
-if GEMINI_API_KEY:
-    try:
+try:
+    import google.generativeai as genai
+    from config import GEMINI_API_KEY
+    if GEMINI_API_KEY:
         genai.configure(api_key=GEMINI_API_KEY.strip())
-        gemini_model = genai.GenerativeModel("gemini-pro")
-    except Exception:
-        gemini_model = None
+except Exception:
+    GEMINI_API_KEY = None
 
 
-async def generate_name_logo_info(name: str):
-    if not gemini_model:
-        return {
-            "meaning": f"{name} ismi uchun ma'lumot topilmadi.",
-            "idea": f"{name} uchun minimalist va premium logo tavsiya etiladi.",
-            "prompt": f"minimalist elegant logo for {name}, premium typography, clean vector, white background"
-        }
+async def generate_name_logo_info(name: str) -> dict:
+    default = {
+        "meaning": f"{name} — chiroyli va ma'noli ism.",
+        "idea": f"{name} uchun zamonaviy minimalist logo tavsiya etiladi.",
+        "prompt": f"minimalist elegant monogram logo for '{name}', premium typography, clean vector, white background, gold and dark navy colors"
+    }
+
+    if not GEMINI_API_KEY:
+        return default
 
     prompt = f"""
-Siz professional naming strategist va logo designer siz.
+Siz professional naming strategist va logo dizaynersiz.
 
-ISM:
-{name}
+ISM: {name}
 
 Vazifa:
-1. Shu ismning o'zbekcha ma'nosini yozing
-2. Shu ismga mos logo idea bering
-3. Shu ism uchun inglizcha professional logo prompt yozing
+1. Shu ismning ma'nosini o'zbek tilida yozing (2-3 jumla)
+2. Shu ismga mos logo g'oyasini o'zbek tilida yozing (2-3 jumla)
+3. Shu ism uchun inglizcha Stability AI logo prompt yozing (1 jumla)
 
 FORMAT:
-MEANING: ...
-IDEA: ...
-PROMPT: ...
+MEANING: [o'zbekcha ma'no]
+IDEA: [o'zbekcha logo g'oyasi]
+PROMPT: [inglizcha logo prompt]
 
-Faqat shu formatda yozing.
+Faqat shu formatda yozing. Ortiqcha so'z yozmang.
 """
 
     try:
-        response = await asyncio.to_thread(gemini_model.generate_content, prompt)
+        model = genai.GenerativeModel("gemini-pro")
+        response = await asyncio.to_thread(model.generate_content, prompt)
         text = response.text.strip()
 
-        result = {
-            "meaning": "",
-            "idea": "",
-            "prompt": ""
-        }
+        result = {"meaning": "", "idea": "", "prompt": ""}
 
         for line in text.split("\n"):
             line = line.strip()
@@ -59,17 +54,14 @@ Faqat shu formatda yozing.
                 result["prompt"] = line[7:].strip()
 
         if not result["meaning"]:
-            result["meaning"] = f"{name} ismi ijobiy va chiroyli ma'noga ega."
+            result["meaning"] = default["meaning"]
         if not result["idea"]:
-            result["idea"] = f"{name} uchun zamonaviy va premium logo tavsiya qilinadi."
+            result["idea"] = default["idea"]
         if not result["prompt"]:
-            result["prompt"] = f"minimalist luxury logo for {name}, elegant typography, vector, clean white background"
+            result["prompt"] = default["prompt"]
 
         return result
 
-    except Exception:
-        return {
-            "meaning": f"{name} ismi ijobiy ma'noga ega.",
-            "idea": f"{name} uchun zamonaviy va premium logo tavsiya qilinadi.",
-            "prompt": f"minimalist luxury logo for {name}, elegant typography, vector, clean white background"
-        }
+    except Exception as e:
+        print(f"Name logo xatosi: {e}")
+        return default
