@@ -9,6 +9,7 @@ from aiogram.filters import Command
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
+
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN topilmadi! Render Environment ga qo'ying.")
@@ -19,7 +20,7 @@ ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 # GEMINI_API_KEY faqat kerak bo'lsa:
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-# --- DB ---
+# --- DB FUNKSIYALARI ---
 from db import (
     check_limit, init_db, add_user, get_stats,
     get_all_users, add_premium_limit, get_limit_info,
@@ -42,7 +43,7 @@ user_category = {}
 
 
 # ============================================================
-# YORDAMCHI
+# YORDAMCHI FUNKSIYALAR
 # ============================================================
 
 def is_admin(uid: int) -> bool:
@@ -155,7 +156,8 @@ PROMPT_SAMPLES = {
 
 @dp.message(Command("start"))
 async def start_command(m: Message):
-    is_new = add_user(m.from_user.id, m.from_user.username, m.from_user.full_name)
+    # Tugma qotmasligi uchun DB funksiyasi alohida thread'ga olindi
+    is_new = await asyncio.to_thread(add_user, m.from_user.id, m.from_user.username, m.from_user.full_name)
 
     text = (
         f"👋 Salom, <b>{m.from_user.full_name}</b>!\n\n"
@@ -178,7 +180,7 @@ async def start_command(m: Message):
     )
     await m.answer(text, reply_markup=main_menu())
 
-    # Admin ga yangi foydalanuvchi haqida xabar (Xavfsiz va to'g'rilangan)
+    # Adminga xabar berish mantiqi xavfsiz holatga keltirildi
     if ADMIN_ID:
         try:
             username = f"@{m.from_user.username}" if m.from_user.username else "yo'q"
@@ -187,13 +189,14 @@ async def start_command(m: Message):
                 f"👤 Ism: <b>{m.from_user.full_name}</b>\n"
                 f"🔗 Username: {username}\n"
                 f"🆔 ID: <code>{m.from_user.id}</code>\n"
-                f"📊 is_new holati: {is_new}\n"
+                f"📊 Yangi foydalanuvchimi: {'Ha' if is_new else 'Yoq (Eski)'}\n"
             )
-            users_count, _ = get_stats()
+            users_count, _ = await asyncio.to_thread(get_stats)
             admin_text += f"\n📊 Jami foydalanuvchilar: <b>{users_count}</b>"
             await m.bot.send_message(chat_id=ADMIN_ID, text=admin_text)
         except Exception as e:
-            logger.error(f"Adminga xabar yuborishda xatolik: {e}")
+            logger.error(f"Adminga start xabari yuborishda xatolik: {e}")
+
 
 @dp.message(Command("users"))
 async def users_list_command(m: Message):
@@ -202,7 +205,7 @@ async def users_list_command(m: Message):
 
     try:
         from db import get_recent_users
-        users = get_recent_users(20)
+        users = await asyncio.to_thread(get_recent_users, 20)
 
         if not users:
             await m.answer("❌ Foydalanuvchilar topilmadi.")
@@ -219,24 +222,28 @@ async def users_list_command(m: Message):
                 f"    📅 {user['joined_date']}\n\n"
             )
 
-        users_count, total_usage = get_stats()
+        users_count, total_usage = await asyncio.to_thread(get_stats)
         text += f"📊 <b>Jami:</b> {users_count} ta foydalanuvchi, {total_usage} ta generatsiya"
 
         await m.answer(text)
 
     except Exception as e:
+        logger.error(f"/users komandasi ishlashida xato: {e}", exc_info=True)
         await m.answer(f"Xato: {e}")
         
+
 @dp.message(Command("limit"))
 async def limit_command(m: Message):
-    add_user(m.from_user.id, m.from_user.username, m.from_user.full_name)
+    await asyncio.to_thread(add_user, m.from_user.id, m.from_user.username, m.from_user.full_name)
     if is_admin(m.from_user.id):
         await m.answer("👑 Siz adminsiz! Limit yo'q.")
         return
-    info = get_limit_info(m.from_user.id, FREE_LIMIT)
+        
+    info = await asyncio.to_thread(get_limit_info, m.from_user.id, FREE_LIMIT)
     if not info:
         await m.answer("❌ /start bosing.")
         return
+        
     text = (
         f"📊 <b>Limitingiz</b>\n\n"
         f"🎁 Bepul: <b>{FREE_LIMIT}</b>\n"
@@ -273,7 +280,7 @@ async def help_command(m: Message):
 @dp.message(Command("admin"))
 async def admin_panel(m: Message):
     if not is_admin(m.from_user.id): return
-    users_count, total_usage = get_stats()
+    users_count, total_usage = await asyncio.to_thread(get_stats)
     await m.answer(
         f"👑 <b>Admin Panel</b>\n\n"
         f"👥 Foydalanuvchilar: <b>{users_count}</b>\n"
@@ -292,14 +299,16 @@ async def broadcast_command(m: Message):
     if not text:
         await m.answer("❗ Matn kiriting.")
         return
-    users = get_all_users()
+    users = await asyncio.to_thread(get_all_users)
     msg = await m.answer(f"⏳ {len(users)} foydalanuvchiga yuborilmoqda...")
     s, f = 0, 0
     for uid in users:
         try:
-            await m.bot.send_message(chat_id=uid, text=text); s += 1
+            await m.bot.send_message(chat_id=uid, text=text)
+            s += 1
             await asyncio.sleep(0.05)
-        except: f += 1
+        except: 
+            f += 1
     await msg.edit_text(f"✅ Yuborildi: <b>{s}</b>\n❌ Xato: <b>{f}</b>")
 
 
@@ -309,14 +318,19 @@ async def give_limit_command(m: Message):
     try:
         parts = m.text.split()
         if len(parts) < 3:
-            await m.answer("❗ <code>/give [id] [son]</code>"); return
+            await m.answer("❗ <code>/give [id] [son]</code>")
+            return
         tid, amt = int(parts[1]), int(parts[2])
-        if add_premium_limit(tid, amt):
+        success = await asyncio.to_thread(add_premium_limit, tid, amt)
+        if success:
             await m.answer(f"✅ <code>{tid}</code> ga +{amt} limit.")
             try: await m.bot.send_message(chat_id=tid, text=f"🎉 +{amt} limit qo'shildi!")
             except: pass
-        else: await m.answer("❌ Topilmadi.")
-    except: await m.answer("❗ <code>/give 512345678 30</code>")
+        else: 
+            await m.answer("❌ Topilmadi.")
+    except Exception as e: 
+        logger.error(f"/give komandasida xato: {e}")
+        await m.answer("❗ <code>/give 512345678 30</code>")
 
 
 @dp.message(Command("reset"))
@@ -325,11 +339,16 @@ async def reset_command(m: Message):
     try:
         parts = m.text.split()
         if len(parts) < 2:
-            await m.answer("❗ <code>/reset [id]</code>"); return
-        if reset_user_usage(int(parts[1])):
+            await m.answer("❗ <code>/reset [id]</code>")
+            return
+        success = await asyncio.to_thread(reset_user_usage, int(parts[1]))
+        if success:
             await m.answer(f"✅ Tiklandi.")
-        else: await m.answer("❌ Topilmadi.")
-    except: await m.answer("❗ <code>/reset 512345678</code>")
+        else: 
+            await m.answer("❌ Topilmadi.")
+    except Exception as e: 
+        logger.error(f"/reset komandasida xato: {e}")
+        await m.answer("❗ <code>/reset 512345678</code>")
 
 
 @dp.message(Command("userinfo"))
@@ -338,10 +357,12 @@ async def userinfo_command(m: Message):
     try:
         parts = m.text.split()
         if len(parts) < 2:
-            await m.answer("❗ <code>/userinfo [id]</code>"); return
-        info = get_user_info(int(parts[1]))
+            await m.answer("❗ <code>/userinfo [id]</code>")
+            return
+        info = await asyncio.to_thread(get_user_info, int(parts[1]))
         if not info:
-            await m.answer("❌ Topilmadi."); return
+            await m.answer("❌ Topilmadi.")
+            return
         total = FREE_LIMIT + info["premium_limit"]
         rem = max(0, total - info["usage_count"])
         await m.answer(
@@ -353,7 +374,9 @@ async def userinfo_command(m: Message):
             f"💎 Premium: {info['premium_limit']}\n"
             f"🔋 Qolgan: {rem}"
         )
-    except: await m.answer("❗ <code>/userinfo 512345678</code>")
+    except Exception as e: 
+        logger.error(f"/userinfo komandasida xato: {e}")
+        await m.answer("❗ <code>/userinfo 512345678</code>")
 
 
 # ============================================================
@@ -402,7 +425,7 @@ async def category_handler(m: Message):
             "🔤 <b>Ism Logo</b>\n\n"
             "Ism yoki brand nomi yozing.\n\n"
             "Bot sizga:\n"
-            "📖 Ism ma'nosini\n"
+            "📖 Ism ma'sensini\n"
             "💡 Logo g'oyasini\n"
             "🎨 Tayyor logoni\n"
             "yaratib beradi.\n\n"
@@ -416,7 +439,7 @@ async def category_handler(m: Message):
 
 
 # ============================================================
-# GENERATSIYA
+# GENERATSIYA JARAYONI
 # ============================================================
 
 @dp.message()
@@ -431,8 +454,11 @@ async def generate_handler(m: Message):
     if not user_text:
         return
 
-    # Limit
-    if not is_admin(user_id) and not check_limit(user_id, FREE_LIMIT):
+    # Limit tekshiruvi to'liq asinxron ipga o'tkazildi (Bloklanish yo'qotildi)
+    is_admin_user = is_admin(user_id)
+    has_limit = await asyncio.to_thread(check_limit, user_id, FREE_LIMIT)
+
+    if not is_admin_user and not has_limit:
         await m.answer(
             "❌ <b>Limit tugadi!</b>\n\n"
             "💰 <b>Tariflar:</b>\n"
@@ -473,7 +499,7 @@ async def generate_handler(m: Message):
             await safe_remove_file(f)
             await safe_delete(msg)
 
-    # === RASM ===
+    # === ODDIY RASM KATEGORIYALARI ===
     else:
         msg = await m.answer(
             f"⏳ <b>{category}</b> uchun rasm yaratilmoqda...\n"
@@ -490,7 +516,7 @@ async def generate_handler(m: Message):
             else:
                 await m.answer(f"❌ Xatolik: {err}")
         except Exception as e:
-            logger.error(f"Rasm generatsiyasida xatolik ({category}): {e}", exc_info=True)
+            logger.error(f"Rasm generatsiyasida jiddiy xatolik ({category}): {e}", exc_info=True)
             await m.answer(f"❌ Xato: {e}")
         finally:
             await safe_remove_file(f)
@@ -498,7 +524,7 @@ async def generate_handler(m: Message):
 
 
 # ============================================================
-# WEB SERVER
+# WEB SERVER (RENDER SOG'LIQ MONITORINGI)
 # ============================================================
 
 async def run_web_server():
@@ -532,5 +558,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    try: asyncio.run(main())
-    except KeyboardInterrupt: logger.info("Bot to'xtatildi.")
+    try: 
+        asyncio.run(main())
+    except KeyboardInterrupt: 
+        logger.info("Bot to'xtatildi.")
