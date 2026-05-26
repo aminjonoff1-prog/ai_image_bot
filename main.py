@@ -153,7 +153,8 @@ PROMPT_SAMPLES = {
 
 @dp.message(Command("start"))
 async def start_command(m: Message):
-    add_user(m.from_user.id, m.from_user.username, m.from_user.full_name)
+    is_new = add_user(m.from_user.id, m.from_user.username, m.from_user.full_name)
+
     text = (
         f"👋 Salom, <b>{m.from_user.full_name}</b>!\n\n"
         f"🤖 Men AI rasm va dizayn generator botman.\n\n"
@@ -175,6 +176,21 @@ async def start_command(m: Message):
     )
     await m.answer(text, reply_markup=main_menu())
 
+    # Admin ga yangi foydalanuvchi haqida xabar
+    if is_new and ADMIN_ID:
+        try:
+            username = f"@{m.from_user.username}" if m.from_user.username else "yo'q"
+            admin_text = (
+                f"🆕 <b>Yangi foydalanuvchi!</b>\n\n"
+                f"👤 Ism: <b>{m.from_user.full_name}</b>\n"
+                f"🔗 Username: {username}\n"
+                f"🆔 ID: <code>{m.from_user.id}</code>\n"
+            )
+            users_count, _ = get_stats()
+            admin_text += f"\n📊 Jami foydalanuvchilar: <b>{users_count}</b>"
+            await bot.send_message(ADMIN_ID, admin_text)
+        except Exception:
+            pass
 
 @dp.message(Command("limit"))
 async def limit_command(m: Message):
