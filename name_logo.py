@@ -13,266 +13,132 @@ except Exception:
 
 
 # ============================================================
-# GEMINI MODEL TOPISH (bir marta topadi, keyin saqlab qo'yadi)
+# GEMINI MODEL (sinxron test QILMAYMIZ)
 # ============================================================
 
-_cached_model = None
-_model_checked = False
+MODELS = [
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
+    "gemini-pro",
+]
 
 
-def find_working_model():
-    """Ishlaydigan Gemini modelini topadi va keshlab qo'yadi"""
-    global _cached_model, _model_checked
+async def safe_gemini_call(prompt: str) -> str:
+    """Xavfsiz va tez Gemini chaqiruv. Bot qotmaydi."""
+    if not GEMINI_API_KEY:
+        return None
 
-    if _model_checked:
-        return _cached_model
-
-    models = [
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-pro",
-        "gemini-1.5-pro-latest",
-        "gemini-pro",
-    ]
-
-    for name in models:
+    for model_name in MODELS:
         try:
-            model = genai.GenerativeModel(name)
-            # Test so'rov
-            test = model.generate_content("Salom, 1+1 nechta?")
-            if test and test.text:
-                print(f"✅ Ism Logo uchun Gemini modeli topildi: {name}")
-                _cached_model = model
-                _model_checked = True
-                return model
-        except Exception as e:
-            print(f"❌ Model ishlamadi: {name} -> {e}")
+            model = genai.GenerativeModel(model_name)
+            response = await asyncio.wait_for(
+                asyncio.to_thread(model.generate_content, prompt),
+                timeout=15.0
+            )
+            text = (response.text or "").strip()
+            if text:
+                return text
+        except asyncio.TimeoutError:
+            continue
+        except Exception:
             continue
 
-    print("⚠️ Hech qaysi Gemini modeli ishlamadi")
-    _model_checked = True
-    _cached_model = None
     return None
 
 
 # ============================================================
-# GEMINI ORQALI ISM MA'NOSI VA LOGO OLISH
+# HARF VA JINS TIZIMI
 # ============================================================
 
-async def ask_gemini_about_name(name: str) -> dict:
-    """Gemini dan ism haqida batafsil ma'lumot oladi"""
-    model = await asyncio.to_thread(find_working_model)
-
-    if not model:
-        return None
-
-    prompt = f"""
-Sen dunyodagi eng bilimdon onomastika (ismlar ilmi) professori va professional logo dizaynersiz.
-
-ISM: "{name}"
-
-VAZIFA:
-1. MEANING: Shu ismning kelib chiqishi (qaysi tildan: arab, fors, turk, o'zbek va h.k.), to'liq lug'aviy ma'nosi, qanday xususiyatlarni anglatishi — barchasini o'zbek tilida batafsil yoz (4-5 jumla). Agar ism noma'lum bo'lsa, harflar ma'nosini, fonetik jihatdan qanday his uyg'otishini yoz.
-
-2. IDEA: Shu ismga mos professional logo g'oyasini o'zbek tilida batafsil yoz. Qanday shakl (monogram, emblem, geometric, abstract), qanday element (toj, qalqon, gul, yulduz, qilich va h.k.), qanday ranglar (aniq rang nomlari) ishlatilishi kerakligini yoz (3-4 jumla).
-
-3. PROMPT: Shu ism uchun Stability AI ga beriladigan bitta batafsil inglizcha professional logo prompt yoz. Prompt ichida: logo turi, harflar, shakl, ranglar, uslub, fon — hammasi bo'lishi kerak (1 uzun jumla).
-
-MUHIM QOIDALAR:
-- Hech qanday ism "noma'lum" deb javob berma
-- Har doim batafsil va ijobiy ma'lumot ber
-- FORMAT qat'iy bo'lsin:
-
-MEANING: [batafsil o'zbekcha ma'no]
-IDEA: [batafsil o'zbekcha logo g'oyasi]
-PROMPT: [batafsil inglizcha logo prompt]
-"""
-
-    try:
-        response = await asyncio.to_thread(model.generate_content, prompt)
-        text = response.text.strip()
-
-        if not text:
-            return None
-
-        result = {"meaning": "", "idea": "", "prompt": ""}
-        current_key = None
-        current_lines = []
-
-        for line in text.split("\n"):
-            stripped = line.strip()
-            if not stripped:
-                continue
-
-            if stripped.upper().startswith("MEANING:"):
-                if current_key and current_lines:
-                    result[current_key] = " ".join(current_lines)
-                current_key = "meaning"
-                current_lines = [stripped[8:].strip()]
-
-            elif stripped.upper().startswith("IDEA:"):
-                if current_key and current_lines:
-                    result[current_key] = " ".join(current_lines)
-                current_key = "idea"
-                current_lines = [stripped[5:].strip()]
-
-            elif stripped.upper().startswith("PROMPT:"):
-                if current_key and current_lines:
-                    result[current_key] = " ".join(current_lines)
-                current_key = "prompt"
-                current_lines = [stripped[7:].strip()]
-
-            elif current_key:
-                current_lines.append(stripped)
-
-        # Oxirgi qismni saqlash
-        if current_key and current_lines:
-            result[current_key] = " ".join(current_lines)
-
-        # Tekshirish
-        if result["meaning"] and result["prompt"]:
-            if not result["idea"]:
-                result["idea"] = f"{name} uchun zamonaviy va professional logo tavsiya etiladi."
-            return result
-
-        return None
-
-    except Exception as e:
-        print(f"Gemini ism xatosi: {e}")
-        return None
-
-
-# ============================================================
-# DEEP TRANSLATOR ORQALI ISM MA'NOSI
-# ============================================================
-
-def translate_name_meaning(name: str) -> str:
-    """Ism haqida Google Translate orqali qo'shimcha ma'lumot oladi"""
-    try:
-        # "X ismining ma'nosi" deb so'rab ko'ramiz
-        query = f"{name} ismining ma'nosi nima"
-        result = GoogleTranslator(source='uz', target='en').translate(query)
-        if result:
-            # Inglizchadan o'zbekchaga qaytaramiz
-            back = GoogleTranslator(source='en', target='uz').translate(
-                f"The name {name} is a beautiful name with positive meaning. "
-                f"It represents strength, wisdom and kindness."
-            )
-            if back:
-                return back
-    except Exception:
-        pass
-
-    return ""
-
-
-# ============================================================
-# AQLLI DEFAULT TIZIMI
-# ============================================================
-
-# Harf xususiyatlari (har bir harf uchun uslub)
 LETTER_STYLES = {
-    "A": {"shape": "triangle, arrow, mountain peak", "color": "royal blue and gold", "feel": "leadership, ambition"},
-    "B": {"shape": "bold curves, book, bridge", "color": "burgundy and cream", "feel": "stability, warmth"},
-    "C": {"shape": "crescent, circle, crown", "color": "coral and silver", "feel": "creativity, charm"},
-    "D": {"shape": "diamond, door, dome", "color": "deep purple and gold", "feel": "dignity, depth"},
-    "E": {"shape": "three lines, eagle, energy wave", "color": "emerald green and white", "feel": "energy, elegance"},
-    "F": {"shape": "flag, flame, feather", "color": "fiery orange and dark gray", "feel": "freedom, passion"},
-    "G": {"shape": "globe, gear, geometric circle", "color": "green and gold", "feel": "growth, generosity"},
-    "H": {"shape": "pillar, house, horizon", "color": "navy and silver", "feel": "honor, harmony"},
-    "I": {"shape": "pillar, star, infinity", "color": "indigo and white", "feel": "intelligence, integrity"},
-    "J": {"shape": "jewel, jade stone, curved hook", "color": "jade green and gold", "feel": "joy, justice"},
-    "K": {"shape": "key, knight shield, kite", "color": "black and gold", "feel": "knowledge, strength"},
-    "L": {"shape": "leaf, lightning, laurel wreath", "color": "lime green and dark green", "feel": "life, loyalty"},
-    "M": {"shape": "mountain, monogram, mosaic", "color": "dark navy and gold", "feel": "mastery, magnificence"},
-    "N": {"shape": "star, north star, nucleus", "color": "navy blue and silver", "feel": "nobility, navigation"},
-    "O": {"shape": "circle, orbit, olive branch", "color": "orange and white", "feel": "openness, optimism"},
-    "P": {"shape": "phoenix, pillar, pearl", "color": "purple and gold", "feel": "power, prestige"},
-    "Q": {"shape": "queen crown, quill pen", "color": "gold and dark red", "feel": "quality, quintessence"},
-    "R": {"shape": "ribbon, rose, royal crest", "color": "red and gold", "feel": "royalty, resilience"},
-    "S": {"shape": "shield, serpent, sun", "color": "sapphire blue and gold", "feel": "strength, sophistication"},
-    "T": {"shape": "tower, tree, triangle", "color": "teal and bronze", "feel": "trust, tradition"},
-    "U": {"shape": "umbrella, unity symbol, upward arrow", "color": "ultramarine and white", "feel": "unity, uniqueness"},
-    "V": {"shape": "victory wings, vine, chevron", "color": "violet and silver", "feel": "valor, vision"},
-    "W": {"shape": "wave, wings, wreath", "color": "wine red and gold", "feel": "wisdom, wonder"},
-    "X": {"shape": "cross, x-mark, abstract geometric", "color": "black and electric blue", "feel": "excellence, extraordinary"},
-    "Y": {"shape": "tree branch, yacht sail, yin-yang", "color": "yellow gold and dark green", "feel": "youth, yearning"},
-    "Z": {"shape": "zigzag, zen circle, zenith star", "color": "azure blue and gold", "feel": "zeal, zenith"},
+    "A": {"shape": "triangle, arrow", "color": "royal blue and gold", "feel": "leadership"},
+    "B": {"shape": "bold curves, book", "color": "burgundy and cream", "feel": "stability"},
+    "C": {"shape": "crescent, crown", "color": "coral and silver", "feel": "creativity"},
+    "D": {"shape": "diamond, dome", "color": "deep purple and gold", "feel": "dignity"},
+    "E": {"shape": "eagle, energy wave", "color": "emerald green and white", "feel": "energy"},
+    "F": {"shape": "flame, feather", "color": "orange and dark gray", "feel": "freedom"},
+    "G": {"shape": "globe, geometric", "color": "green and gold", "feel": "growth"},
+    "H": {"shape": "pillar, horizon", "color": "navy and silver", "feel": "honor"},
+    "I": {"shape": "pillar, infinity", "color": "indigo and white", "feel": "intelligence"},
+    "J": {"shape": "jewel, jade", "color": "jade green and gold", "feel": "joy"},
+    "K": {"shape": "key, knight shield", "color": "black and gold", "feel": "knowledge"},
+    "L": {"shape": "leaf, laurel", "color": "lime and dark green", "feel": "loyalty"},
+    "M": {"shape": "mountain, mosaic", "color": "dark navy and gold", "feel": "mastery"},
+    "N": {"shape": "north star", "color": "navy blue and silver", "feel": "nobility"},
+    "O": {"shape": "orbit, olive branch", "color": "orange and white", "feel": "optimism"},
+    "P": {"shape": "phoenix, pearl", "color": "purple and gold", "feel": "power"},
+    "Q": {"shape": "queen crown, quill", "color": "gold and dark red", "feel": "quality"},
+    "R": {"shape": "ribbon, royal crest", "color": "red and gold", "feel": "royalty"},
+    "S": {"shape": "shield, sun", "color": "sapphire blue and gold", "feel": "strength"},
+    "T": {"shape": "tower, tree", "color": "teal and bronze", "feel": "trust"},
+    "U": {"shape": "unity symbol", "color": "ultramarine and white", "feel": "unity"},
+    "V": {"shape": "victory wings", "color": "violet and silver", "feel": "valor"},
+    "W": {"shape": "wave, wings", "color": "wine red and gold", "feel": "wisdom"},
+    "X": {"shape": "abstract geometric", "color": "black and electric blue", "feel": "excellence"},
+    "Y": {"shape": "tree branch", "color": "yellow gold and green", "feel": "youth"},
+    "Z": {"shape": "zigzag, zen circle", "color": "azure blue and gold", "feel": "zeal"},
 }
 
-# Ism oxiri bo'yicha jins aniqlash
-FEMALE_ENDINGS = ["a", "o", "i", "gul", "noz", "oy", "zod", "xon", "bibi", "begim"]
+FEMALE_ENDINGS = ["a", "o", "i", "gul", "noz", "oy", "xon", "bibi", "begim"]
 MALE_ENDINGS = ["on", "od", "id", "ur", "ul", "bek", "boy", "ali", "jon", "din"]
 
 
 def detect_gender(name: str) -> str:
-    """Ismning jinsini taxmin qiladi"""
     lower = name.lower().strip()
-    for ending in FEMALE_ENDINGS:
-        if lower.endswith(ending):
+    for e in FEMALE_ENDINGS:
+        if lower.endswith(e):
             return "female"
-    for ending in MALE_ENDINGS:
-        if lower.endswith(ending):
+    for e in MALE_ENDINGS:
+        if lower.endswith(e):
             return "male"
     return "neutral"
 
 
 def generate_smart_default(name: str) -> dict:
-    """Gemini ishlamasa ham aqlli va batafsil javob beradi"""
     name_clean = name.strip()
-    first_letter = name_clean[0].upper() if name_clean else "A"
+    first = name_clean[0].upper() if name_clean else "A"
     gender = detect_gender(name_clean)
+    style = LETTER_STYLES.get(first, LETTER_STYLES["A"])
 
-    style = LETTER_STYLES.get(first_letter, LETTER_STYLES["A"])
-
-    # Jinsga qarab so'zlar
     if gender == "female":
-        gender_desc = "nafis, go'zal va nazik"
-        gender_style = "feminine elegant"
-        gender_elements = "flower petals, graceful curves"
+        g_desc = "nafis, go'zal va nazik"
+        g_style = "feminine elegant"
+        g_elem = "flower petals, graceful curves"
     elif gender == "male":
-        gender_desc = "kuchli, jasur va ishonchli"
-        gender_style = "bold masculine"
-        gender_elements = "shield, strong geometric shapes"
+        g_desc = "kuchli, jasur va ishonchli"
+        g_style = "bold masculine"
+        g_elem = "shield, strong geometric shapes"
     else:
-        gender_desc = "noyob, zamonaviy va professional"
-        gender_style = "modern unisex"
-        gender_elements = "clean geometric shapes"
+        g_desc = "noyob, zamonaviy va professional"
+        g_style = "modern unisex"
+        g_elem = "clean geometric shapes"
 
     meaning = (
-        f"{name_clean} — bu {gender_desc} xususiyatlarni o'zida "
+        f"{name_clean} — bu {g_desc} xususiyatlarni o'zida "
         f"mujassam etgan go'zal va ma'noli ism. "
-        f"Bu ism o'z egasiga yuksak maqsadlar, ezgulik va muvaffaqiyat "
-        f"tilaydigan chuqur ma'noga ega. "
-        f"'{first_letter}' harfi bilan boshlanishi {style['feel']} "
-        f"kabi fazilatlarni anglatadi. "
+        f"Bu ism o'z egasiga yuksak maqsadlar, ezgulik va muvaffaqiyat tilaydigan "
+        f"chuqur ma'noga ega. '{first}' harfi bilan boshlanishi "
+        f"{style['feel']} kabi fazilatlarni anglatadi. "
         f"Bu ismni tashuvchi inson jamiyatda hurmat va e'tiborga sazovor bo'ladi."
     )
 
     idea = (
-        f"'{name_clean}' uchun {gender_style} uslubda premium monogram logo tavsiya etiladi. "
-        f"'{first_letter}' harfi {style['shape']} elementlari bilan birlashtiriladi. "
+        f"'{name_clean}' uchun {g_style} uslubda premium monogram logo tavsiya etiladi. "
+        f"'{first}' harfi {style['shape']} elementlari bilan birlashtiriladi. "
         f"Ranglar: {style['color']}. "
-        f"Logo {gender_elements} qo'shilgan holda zamonaviy va professional "
-        f"ko'rinishga ega bo'ladi."
+        f"Logo {g_elem} qo'shilgan holda zamonaviy ko'rinishga ega bo'ladi."
     )
 
     prompt = (
-        f"{gender_style} premium monogram logo for '{name_clean}', "
-        f"featuring letter {first_letter} with {style['shape']} elements, "
-        f"{style['color']} color scheme, {gender_elements}, "
-        f"luxury brand identity, elegant refined typography, "
-        f"professional vector design, clean white background, "
-        f"high quality, minimalist yet sophisticated"
+        f"{g_style} premium monogram logo for '{name_clean}', "
+        f"letter {first} with {style['shape']} elements, "
+        f"{style['color']} colors, {g_elem}, "
+        f"luxury brand, elegant typography, "
+        f"vector design, clean white background"
     )
 
-    return {
-        "meaning": meaning,
-        "idea": idea,
-        "prompt": prompt
-    }
+    return {"meaning": meaning, "idea": idea, "prompt": prompt}
 
 
 # ============================================================
@@ -280,32 +146,74 @@ def generate_smart_default(name: str) -> dict:
 # ============================================================
 
 async def generate_name_logo_info(name: str) -> dict:
-    """
-    Har qanday ism uchun:
-    1. Ma'nosini topadi
-    2. Logo g'oyasini beradi
-    3. Logo promptini yaratadi
-
-    Ketma-ketlik:
-    1. Gemini AI (eng yaxshi natija)
-    2. Aqlli default (har doim ishlaydi)
-    """
-
     name = name.strip()
-
     if not name:
         return generate_smart_default("Ism")
 
-    # 1-QADAM: Gemini orqali so'rash
+    # 1. Gemini dan so'rash (15 sekund timeout)
     if GEMINI_API_KEY:
-        try:
-            ai_result = await ask_gemini_about_name(name)
-            if ai_result:
-                print(f"✅ Gemini javob berdi: {name}")
-                return ai_result
-        except Exception as e:
-            print(f"Gemini xatosi: {e}")
+        prompt = f"""
+Sen onomastika (ismlar ilmi) professori va logo dizaynersiz.
 
-    # 2-QADAM: Aqlli default
-    print(f"⚠️ Default ishlatilmoqda: {name}")
+ISM: "{name}"
+
+VAZIFA:
+1. MEANING: Ismning kelib chiqishi, qaysi tildan ekanligi, lug'aviy ma'nosi, qanday xususiyatlarni anglatishi — o'zbek tilida batafsil (4-5 jumla)
+
+2. IDEA: Ismga mos logo g'oyasi — shakl, element, ranglar, uslub — o'zbek tilida (3-4 jumla)
+
+3. PROMPT: Stability AI uchun inglizcha logo prompt (1 uzun jumla)
+
+FORMAT:
+MEANING: [ma'no]
+IDEA: [g'oya]
+PROMPT: [prompt]
+"""
+
+        try:
+            text = await safe_gemini_call(prompt)
+
+            if text:
+                result = {"meaning": "", "idea": "", "prompt": ""}
+                current_key = None
+                lines_buf = []
+
+                for line in text.split("\n"):
+                    s = line.strip()
+                    if not s:
+                        continue
+
+                    if s.upper().startswith("MEANING:"):
+                        if current_key and lines_buf:
+                            result[current_key] = " ".join(lines_buf)
+                        current_key = "meaning"
+                        lines_buf = [s[8:].strip()]
+
+                    elif s.upper().startswith("IDEA:"):
+                        if current_key and lines_buf:
+                            result[current_key] = " ".join(lines_buf)
+                        current_key = "idea"
+                        lines_buf = [s[5:].strip()]
+
+                    elif s.upper().startswith("PROMPT:"):
+                        if current_key and lines_buf:
+                            result[current_key] = " ".join(lines_buf)
+                        current_key = "prompt"
+                        lines_buf = [s[7:].strip()]
+
+                    elif current_key:
+                        lines_buf.append(s)
+
+                if current_key and lines_buf:
+                    result[current_key] = " ".join(lines_buf)
+
+                if result["meaning"] and result["prompt"]:
+                    if not result["idea"]:
+                        result["idea"] = f"{name} uchun zamonaviy logo tavsiya etiladi."
+                    return result
+
+        except Exception:
+            pass
+
+    # 2. Aqlli default
     return generate_smart_default(name)
