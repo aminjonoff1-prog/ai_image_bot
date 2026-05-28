@@ -58,11 +58,9 @@ def execute_query(query, params=None, fetch=False, fetchone=False):
         elif fetch:
             result = cursor.fetchall()
 
-        # Ma'lumotlarni o'zgartiruvchi so'rovlar uchun har doim commit qilamiz
         if not fetch and not fetchone:
             conn.commit()
         else:
-            # PostgreSQL da SELECT so'rovlaridan keyin ham commit/rollback qilish ulanishni bo'shatadi
             conn.commit() 
 
         return result
@@ -94,37 +92,53 @@ def _sqlite_has_column(table: str, column: str) -> bool:
         except: pass
 
 
+def _postgres_has_column(table: str, column: str) -> bool:
+    row = execute_query("""
+        SELECT COUNT(*) FROM information_schema.columns 
+        WHERE table_name = ? AND column_name = ?
+    """, (table, column), fetchone=True)
+    return int(row[0] if row else 0) > 0
+
+
 def init_db():
     conn = get_conn()
     cursor = conn.cursor()
+    today_date = datetime.now().strftime("%Y-%m-%d")
     try:
         if USE_POSTGRES:
-            cursor.execute("""
+            cursor.execute(f"""
                 CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY,
                     username TEXT,
                     full_name TEXT,
                     usage_count INTEGER DEFAULT 0,
                     premium_limit INTEGER DEFAULT 0,
-                    joined_date TEXT
+                    joined_date TEXT,
+                    last_reset_date TEXT DEFAULT '{today_date}'
                 )
             """)
             conn.commit()
+            
+            # PostgreSQL uchun migratsiya (Agar eski loyiha bo'lsa)
+            if not _postgres_has_column("users", "last_reset_date"):
+                execute_query(f"ALTER TABLE users ADD COLUMN last_reset_date TEXT DEFAULT '{today_date}'")
+            
             _debug_log("✅ PostgreSQL init complete")
         else:
-            cursor.execute("""
+            cursor.execute(f"""
                 CREATE TABLE IF NOT EXISTS users (
                     user_id INTEGER PRIMARY KEY,
                     username TEXT,
                     full_name TEXT,
                     usage_count INTEGER DEFAULT 0,
                     premium_limit INTEGER DEFAULT 0,
-                    joined_date TEXT
+                    joined_date TEXT,
+                    last_reset_date TEXT DEFAULT '{today_date}'
                 )
             """)
             conn.commit()
 
-            # Eski bazada bo'lishi mumkin bo'lgan ustunlar migration
+            # SQLite migration
             if not _sqlite_has_column("users", "premium_limit"):
                 cursor.execute("ALTER TABLE users ADD COLUMN premium_limit INTEGER DEFAULT 0")
             if not _sqlite_has_column("users", "full_name"):
@@ -135,6 +149,8 @@ def init_db():
                 cursor.execute("ALTER TABLE users ADD COLUMN usage_count INTEGER DEFAULT 0")
             if not _sqlite_has_column("users", "joined_date"):
                 cursor.execute("ALTER TABLE users ADD COLUMN joined_date TEXT")
+            if not _sqlite_has_column("users", "last_reset_date"):
+                cursor.execute(f"ALTER TABLE users ADD COLUMN last_reset_date TEXT DEFAULT '{today_date}'")
 
             conn.commit()
             _debug_log("✅ SQLite init/migration complete")
@@ -156,10 +172,10 @@ def init_db():
 
 
 def add_user(user_id, username, full_name) -> bool:
-    """Yangi foydalanuvchi bo'lsa True, bo'lmasa False qaytaradi."""
     safe_username = username if username else "Mavjud emas"
     safe_fullname = full_name if full_name else "Foydalanuvchi"
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    today_date = datetime.now().strftime("%Y-%m-%d")
 
     exists = execute_query(
         "SELECT user_id FROM users WHERE user_id = ?",
@@ -175,23 +191,34 @@ def add_user(user_id, username, full_name) -> bool:
         return False
 
     execute_query(
-        """INSERT INTO users (user_id, username, full_name, usage_count, premium_limit, joined_date)
-           VALUES (?, ?, ?, 0, 0, ?)""",
-        (user_id, safe_username, safe_fullname, now)
+        """INSERT INTO users (user_id, username, full_name, usage_count, premium_limit, joined_date, last_reset_date)
+           VALUES (?, ?, ?, 0, 0, ?, ?)""",
+        (user_id, safe_username, safe_fullname, now_time, today_date)
     )
     return True
 
 
 def check_limit(user_id, free_limit) -> bool:
+    """Kunlik limitni tekshiradi, yangi kun bo'lsa limitni 0 qilib yangilaydi."""
     row = execute_query(
-        "SELECT usage_count, COALESCE(premium_limit, 0) FROM users WHERE user_id = ?",
+        "SELECT usage_count, COALESCE(premium_limit, 0), last_reset_date FROM users WHERE user_id = ?",
         (user_id,),
         fetchone=True
     )
     if not row:
         return False
 
-    usage_count, premium_limit = row
+    usage_count, premium_limit, last_reset_date = row
+    today_date = datetime.now().strftime("%Y-%m-%d")
+
+    # [KUNLIK YANGILANISH MANTIQI]
+    if last_reset_date != today_date:
+        execute_query(
+            "UPDATE users SET usage_count = 0, last_reset_date = ? WHERE user_id = ?",
+            (today_date, user_id)
+        )
+        usage_count = 0  # Mahalliy o'zgaruvchini ham nolga tushiramiz
+
     total_limit = int(free_limit) + int(premium_limit)
 
     if usage_count < total_limit:
@@ -225,14 +252,20 @@ def add_premium_limit(user_id, amount) -> bool:
 
 def get_limit_info(user_id, free_limit):
     row = execute_query(
-        "SELECT usage_count, COALESCE(premium_limit, 0) FROM users WHERE user_id = ?",
+        "SELECT usage_count, COALESCE(premium_limit, 0), last_reset_date FROM users WHERE user_id = ?",
         (user_id,),
         fetchone=True
     )
     if not row:
         return None
 
-    usage_count, premium_limit = row
+    usage_count, premium_limit, last_reset_date = row
+    today_date = datetime.now().strftime("%Y-%m-%d")
+
+    # Ma'lumot olishda ham limit eskirgan bo'lsa to'g'ri hisoblab ko'rsatishi uchun
+    if last_reset_date != today_date:
+        usage_count = 0
+
     total_limit = int(free_limit) + int(premium_limit)
     remaining = max(0, total_limit - usage_count)
 
@@ -253,9 +286,10 @@ def reset_user_usage(user_id) -> bool:
     if not exists:
         return False
 
+    today_date = datetime.now().strftime("%Y-%m-%d")
     execute_query(
-        "UPDATE users SET usage_count = 0 WHERE user_id = ?",
-        (user_id,)
+        "UPDATE users SET usage_count = 0, last_reset_date = ? WHERE user_id = ?",
+        (today_date, user_id)
     )
     return True
 
@@ -283,7 +317,7 @@ def get_all_users():
 def get_user_info(user_id):
     row = execute_query(
         """SELECT user_id, username, full_name, usage_count,
-                  COALESCE(premium_limit, 0), joined_date
+                  COALESCE(premium_limit, 0), joined_date, last_reset_date
            FROM users WHERE user_id = ?""",
         (user_id,),
         fetchone=True
@@ -298,6 +332,7 @@ def get_user_info(user_id):
         "usage_count": int(row[3] or 0),
         "premium_limit": int(row[4] or 0),
         "joined_date": row[5],
+        "last_reset_date": row[6]
     }
 
 
